@@ -1107,18 +1107,24 @@ function Get-LevenshteinDistance {
 
     $Len1 = $String1.Length
     $Len2 = $String2.Length
+
+    # Create a 2D array for the distance matrix
     $Matrix = New-Object 'int[,]' ($Len1 + 1), ($Len2 + 1)
 
+    # Initialize the matrix
     for ($i = 0; $i -le $Len1; $i++) { $Matrix[$i, 0] = $i }
     for ($j = 0; $j -le $Len2; $j++) { $Matrix[0, $j] = $j }
 
+    # Compute the Levenshtein distance
     for ($i = 1; $i -le $Len1; $i++) {
         for ($j = 1; $j -le $Len2; $j++) {
             $Cost = if ($String1[$i - 1] -eq $String2[$j - 1]) { 0 } else { 1 }
+            
+            # Update the matrix cell with the minimum cost
             $Matrix[$i, $j] = [Math]::Min(
                 [Math]::Min(
-                    $Matrix[$i - 1, $j] + 1,  # Deletion
-                    $Matrix[$i, $j - 1] + 1   # Insertion
+                    $Matrix[$i - 1, $j] + 1,   # Deletion
+                    $Matrix[$i, $j - 1] + 1    # Insertion
                 ),
                 $Matrix[$i - 1, $j - 1] + $Cost  # Substitution
             )
