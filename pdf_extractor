@@ -902,13 +902,11 @@ $BtnStart.Add_Click({
     $DuplicateOutputNames = @()  # Store duplicate output names
     $OutputNameSet = @{}  # Track seen output names to find duplicates
     $ValidRows = 0  # Track number of valid rows
+    $FixedPageRanges = @{}  # Store auto-fixed page ranges
 
     # Generate batch timestamp
     $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $BatchFolder = Join-Path $ExportsDir $BatchTimestamp
-
-    # Regular expression for valid page ranges (e.g., 9-12,57-60)
-    $PageRangePattern = "^\d+(-\d+)?(,\d+(-\d+)?)*$"
 
     # Validate PDFs, Page Ranges, and Output Names before starting
     $TotalRows = $DataGridView.Rows.Count - 1
@@ -944,9 +942,10 @@ $BtnStart.Add_Click({
             }
         }
 
-        # Check if Page Range format is correct
-        if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -notmatch $PageRangePattern) {
+        # Fix Page Ranges if invalid
+        if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -notmatch "^\d+(-\d+)?(,\d+(-\d+)?)*$") {
             $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
+            $FixedPageRanges[$RowIndex] = Format-PageRange $PageRanges
         }
 
         # Check for duplicate Output Names
@@ -965,14 +964,29 @@ $BtnStart.Add_Click({
         return  # Stop execution
     }
 
-    # If there are validation errors, show an error window and stop execution
-    if ($InvalidPDFs.Count -gt 0 -or $InvalidPageRanges.Count -gt 0 -or $DuplicateOutputNames.Count -gt 0) {
+    # If invalid page ranges exist, ask user to auto-fix them
+    if ($InvalidPageRanges.Count -gt 0) {
+        $PromptMessage = "⚠ The following rows have invalid page ranges:`n" + ($InvalidPageRanges -join "`n") + "`n`n"
+        $PromptMessage += "Would you like to automatically fix these page ranges?"
+
+        $UserChoice = [System.Windows.Forms.MessageBox]::Show($PromptMessage, "Auto-Fix Page Ranges", "YesNo", "Question")
+
+        if ($UserChoice -eq "Yes") {
+            foreach ($RowIndex in $FixedPageRanges.Keys) {
+                $Row = $DataGridView.Rows[$RowIndex]
+                $Row.Cells["Page Range"].Value = $FixedPageRanges[$RowIndex]
+            }
+            Write-Host "✅ Auto-fixed page ranges."
+        } else {
+            Write-Host "⚠ User declined auto-fixing page ranges."
+        }
+    }
+
+    # If there are remaining validation errors, show an error window and stop execution
+    if ($InvalidPDFs.Count -gt 0 -or $DuplicateOutputNames.Count -gt 0) {
         $ErrorMessage = ""
         if ($InvalidPDFs.Count -gt 0) {
             $ErrorMessage += "🚨 The following PDFs are missing or invalid:`n" + ($InvalidPDFs -join "`n") + "`n`n"
-        }
-        if ($InvalidPageRanges.Count -gt 0) {
-            $ErrorMessage += "⚠ The following rows have invalid page ranges:`n" + ($InvalidPageRanges -join "`n") + "`n`n"
         }
         if ($DuplicateOutputNames.Count -gt 0) {
             $ErrorMessage += "❌ The following output names are duplicated:`n" + ($DuplicateOutputNames -join "`n") + "`n`n"
