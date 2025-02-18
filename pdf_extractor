@@ -768,13 +768,13 @@ function Refresh-PDFList {
     }
 }
 
-# === Mass Input for Master PDFs (Each New Line Becomes a New Row) ===
+# === Mass Input for Master PDFs ===
 $BtnMassMasterPDFs.Add_Click({
     $InputForm = New-Object System.Windows.Forms.Form
     $InputForm.Text = "Mass Input Master PDFs"
     $InputForm.Size = New-Object System.Drawing.Size(400, 300)
     $InputForm.StartPosition = "CenterScreen"
-    $InputForm.TopMost = $true  # Prevents Alt+Tab issues
+    $InputForm.TopMost = $true  # Keeps it on top
 
     # Multi-line TextBox
     $TextBox = New-Object System.Windows.Forms.TextBox
@@ -789,10 +789,9 @@ $BtnMassMasterPDFs.Add_Click({
     $OkButton.Location = New-Object System.Drawing.Point(150, 230)
     $OkButton.Size = New-Object System.Drawing.Size(80, 30)
 
-    # Process Input on OK Click
+    # Process Input
     $OkButton.Add_Click({
         $Entries = $TextBox.Text -split "`r`n"
-
         foreach ($MasterPDFValue in $Entries) {
             $MasterPDFValue = $MasterPDFValue.Trim()
             if (![string]::IsNullOrWhiteSpace($MasterPDFValue)) {
@@ -801,18 +800,16 @@ $BtnMassMasterPDFs.Add_Click({
                 $DataTable.Rows.Add($NewRow)
             }
         }
-
         Enable-AutoComplete  # Refresh auto-complete suggestions
         $InputForm.Close()
-        $Form.Activate()  # Ensure main form regains focus
+        $Form.Activate()  # Bring the main form back into focus
     })
 
     $InputForm.Controls.Add($OkButton)
-
-    # Use Show() instead of ShowDialog() to prevent Alt+Tab crashes
-    $InputForm.Show()
+    
+    # Show as modal window (blocking the main form temporarily)
+    $InputForm.ShowDialog()
 })
-
 
 # === Mass Input for Page Ranges ===
 $BtnPageRange.Add_Click({
@@ -847,13 +844,12 @@ $BtnPageRange.Add_Click({
             }
         }
         $InputForm.Close()
-        $Form.Activate()  # Ensure main form regains focus
+        $Form.Activate()
     })
 
     $InputForm.Controls.Add($OkButton)
-    $InputForm.Show()
+    $InputForm.ShowDialog()
 })
-
 
 # === Mass Input for Output Names ===
 $BtnMassInput.Add_Click({
@@ -888,11 +884,11 @@ $BtnMassInput.Add_Click({
             }
         }
         $InputForm.Close()
-        $Form.Activate()  # Ensure main form regains focus
+        $Form.Activate()
     })
 
     $InputForm.Controls.Add($OkButton)
-    $InputForm.Show()
+    $InputForm.ShowDialog()
 })
 
 # === Initialize GUI and Populate PDF List Before Displaying ===
