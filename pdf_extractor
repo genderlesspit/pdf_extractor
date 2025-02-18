@@ -1039,8 +1039,12 @@ $BtnStart.Add_Click({
 # Start logging
 Start-Logging
 
-# === Start GUI ===
-$Form.Show()
+# === Start GUI Without Freezing PowerShell ===
+$Job = Start-Job -ScriptBlock {
+    Add-Type -AssemblyName System.Windows.Forms
+    $Form.ShowDialog()
+}
+Wait-Job $Job
 
 # Stop logging once the form is closed
 Stop-Logging
