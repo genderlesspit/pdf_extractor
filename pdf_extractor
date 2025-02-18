@@ -894,7 +894,7 @@ $BtnMassInput.Add_Click({
 # === Initialize GUI and Populate PDF List Before Displaying ===
 Refresh-PDFList  # Call function to ensure the PDF list is preloaded
 
-# ==== START BUTTON (With Full Validation & Strict Error Handling) ====
+# ==== START BUTTON (With Full Validation & Controlled Auto-Fix) ====
 $BtnStart.Add_Click({
     $FailedExports = @()  # Reset failed export tracking
     $InvalidPDFs = @()  # Store invalid PDFs
@@ -908,7 +908,7 @@ $BtnStart.Add_Click({
     $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $BatchFolder = Join-Path $ExportsDir $BatchTimestamp
 
-    # Regular expression for valid page ranges (e.g., 9-12,57-60)
+    # Regular expression for **valid** page ranges (e.g., `9-12,57-60`)
     $PageRangePattern = "^\d+(-\d+)?(,\d+(-\d+)?)*$"
 
     # Validate PDFs, Page Ranges, and Output Names before starting
@@ -945,7 +945,7 @@ $BtnStart.Add_Click({
             }
         }
 
-        # Detect spaces in Page Ranges and mark them as errors
+        # **Detect spaces anywhere in Page Ranges**
         if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -match "\s") {
             Write-Host "❌ Invalid Page Range detected (Row $RowIndex): $PageRanges"
             $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
@@ -975,10 +975,19 @@ $BtnStart.Add_Click({
         return  # Stop execution
     }
 
-    # If invalid page ranges exist, ask user to auto-fix them
-    if ($InvalidPageRanges.Count -gt 0 -or $FixedPageRanges.Count -gt 0) {
-        $PromptMessage = "⚠ The following rows have invalid page ranges (spaces or incorrect format):`n" + ($InvalidPageRanges -join "`n") + "`n`n"
-        $PromptMessage += "Would you like to automatically fix these page ranges by removing spaces and applying correct formatting?"
+    # If invalid page ranges exist, prompt user to manually fix first
+    if ($InvalidPageRanges.Count -gt 0) {
+        $ErrorMessage = "⚠ The following rows have invalid page ranges (spaces or incorrect format):`n" + ($InvalidPageRanges -join "`n") + "`n`n"
+        $ErrorMessage += "Please manually fix the page ranges in the grid and click Start again."
+
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Fix Page Ranges", "OK", "Warning")
+        return  # **Stop execution until user manually fixes page ranges**
+    }
+
+    # If invalid page ranges still exist, offer to auto-fix
+    if ($FixedPageRanges.Count -gt 0) {
+        $PromptMessage = "Would you like to automatically fix the following page ranges?`n" + ($FixedPageRanges.Values -join "`n") + "`n`n"
+        $PromptMessage += "This will remove spaces and apply correct formatting."
 
         $UserChoice = [System.Windows.Forms.MessageBox]::Show($PromptMessage, "Auto-Fix Page Ranges", "YesNo", "Question")
 
