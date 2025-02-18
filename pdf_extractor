@@ -894,7 +894,7 @@ $BtnMassInput.Add_Click({
 # === Initialize GUI and Populate PDF List Before Displaying ===
 Refresh-PDFList  # Call function to ensure the PDF list is preloaded
 
-# ==== START BUTTON (With Full Validation) ====
+# ==== START BUTTON (With Full Validation & Auto-Correction) ====
 $BtnStart.Add_Click({
     $FailedExports = @()  # Reset failed export tracking
     $InvalidPDFs = @()  # Store invalid PDFs
@@ -929,9 +929,19 @@ $BtnStart.Add_Click({
         # Count valid rows
         $ValidRows++
 
-        # Check if PDF file exists
+        # Check if PDF file exists; attempt correction if missing
         if (![string]::IsNullOrWhiteSpace($PDFFileName) -and !(Test-Path $PDFPath)) {
-            $InvalidPDFs += "$PDFFileName (Row: $($RowIndex + 1))"
+            Write-Host "❌ PDF not found: $PDFFileName"
+
+            # Attempt to find a close match and rename
+            $CorrectedPath = Find-CloseMatchPDF -MissingPDF $PDFFileName
+
+            if ($CorrectedPath) {
+                Write-Host "✅ Using corrected file: $CorrectedPath"
+                $PDFPath = $CorrectedPath  # Update the path to the newly renamed file
+            } else {
+                $InvalidPDFs += "$PDFFileName (Row: $($RowIndex + 1))"
+            }
         }
 
         # Check if Page Range format is correct
@@ -1031,6 +1041,92 @@ $BtnStart.Add_Click({
     # Stop logging
     Stop-Logging
 })
+
+function Find-CloseMatchPDF {
+    param (
+        [string]$MissingPDF
+    )
+
+    # Ensure Master PDF directory exists
+    if (!(Test-Path $MasterPDFDir)) {
+        Write-Host "⚠ Master PDF directory not found: $MasterPDFDir"
+        return $null
+    }
+
+    # Get list of available PDFs
+    $AvailablePDFs = Get-ChildItem -Path $MasterPDFDir -Filter "*.pdf" | Select-Object -ExpandProperty Name
+
+    if ($AvailablePDFs.Count -eq 0) {
+        Write-Host "⚠ No PDFs found in $MasterPDFDir"
+        return $null
+    }
+
+    # Use Levenshtein distance to find the closest match
+    $BestMatch = $null
+    $BestScore = 100  # Higher numbers mean less similarity
+
+    foreach ($PDF in $AvailablePDFs) {
+        $Score = Get-LevenshteinDistance -String1 $MissingPDF -String2 $PDF
+        if ($Score -lt $BestScore) {
+            $BestScore = $Score
+            $BestMatch = $PDF
+        }
+    }
+
+    # If a close match is found, ask user to confirm
+    if ($BestMatch -and $BestScore -lt 5) {  # Threshold for similarity
+        $Confirm = [System.Windows.Forms.MessageBox]::Show(
+            "Did you mean '$BestMatch' instead of '$MissingPDF'?" + "`n`nClick 'Yes' to rename and use this file.",
+            "PDF Not Found - Close Match Found",
+            "YesNo", "Question"
+        )
+
+        if ($Confirm -eq "Yes") {
+            $OldPath = Join-Path $MasterPDFDir $BestMatch
+            $NewPath = Join-Path $MasterPDFDir $MissingPDF
+
+            try {
+                Rename-Item -Path $OldPath -NewName $MissingPDF -Force
+                Write-Host "✅ Renamed '$BestMatch' to '$MissingPDF'"
+                return $NewPath
+            } catch {
+                Write-Host "❌ Error renaming file: $_"
+                return $null
+            }
+        }
+    }
+
+    return $null
+}
+
+function Get-LevenshteinDistance {
+    param (
+        [string]$String1,
+        [string]$String2
+    )
+
+    $Len1 = $String1.Length
+    $Len2 = $String2.Length
+    $Matrix = New-Object 'int[,]' ($Len1 + 1), ($Len2 + 1)
+
+    for ($i = 0; $i -le $Len1; $i++) { $Matrix[$i, 0] = $i }
+    for ($j = 0; $j -le $Len2; $j++) { $Matrix[0, $j] = $j }
+
+    for ($i = 1; $i -le $Len1; $i++) {
+        for ($j = 1; $j -le $Len2; $j++) {
+            $Cost = if ($String1[$i - 1] -eq $String2[$j - 1]) { 0 } else { 1 }
+            $Matrix[$i, $j] = [Math]::Min(
+                [Math]::Min(
+                    $Matrix[$i - 1, $j] + 1,  # Deletion
+                    $Matrix[$i, $j - 1] + 1   # Insertion
+                ),
+                $Matrix[$i - 1, $j - 1] + $Cost  # Substitution
+            )
+        }
+    }
+
+    return $Matrix[$Len1, $Len2]
+}
 
 # Start logging
 Start-Logging
