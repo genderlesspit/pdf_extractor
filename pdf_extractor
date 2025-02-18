@@ -1040,7 +1040,7 @@ $BtnStart.Add_Click({
 Start-Logging
 
 # === Start GUI ===
-$Form.ShowDialog()
+$Form.Show()
 
 # Stop logging once the form is closed
 Stop-Logging
