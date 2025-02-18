@@ -1,0 +1,1049 @@
+### === Load Required Assemblies ===
+if (-not ("System.Windows.Forms" -as [Type])) { 
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+}
+
+if (-not ("System.Drawing.Color" -as [Type])) { 
+    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+}
+
+### === Define Directories Properly ===
+$FallbackDir = "C:\PDF_Extractor"
+
+try {
+    $UserDocuments = [System.Environment]::GetFolderPath("MyDocuments")
+    if ([string]::IsNullOrWhiteSpace($UserDocuments)) {
+        throw "Unable to determine user 'Documents' folder."
+    }
+} catch {
+    Write-Host "⚠ Warning: Failed to fetch 'Documents' directory. Using fallback location: $FallbackDir"
+    $UserDocuments = $FallbackDir
+}
+
+# Allow custom base directory from config.txt
+$ProgramDir = Join-Path $UserDocuments "PDF_Extractor"
+$MasterPDFDir = Join-Path $ProgramDir "Master_PDFs"
+$ExportsDir = Join-Path $ProgramDir "Exports"
+$LogDir = Join-Path $ProgramDir "Logs"
+
+### === Load Custom Directory from config.txt (if available) ===
+$ConfigPath = ".\config.txt"
+
+if (Test-Path $ConfigPath) {
+    try {
+        # Read and parse config file
+        $ConfigContent = Get-Content $ConfigPath | ConvertFrom-StringData
+        $CustomPath = $ConfigContent["ProgramDir"].Trim()
+
+        if (![string]::IsNullOrWhiteSpace($CustomPath) -and (Test-Path $CustomPath)) {
+            $ProgramDir = $CustomPath
+            $MasterPDFDir = Join-Path $ProgramDir "Master_PDFs"
+            $ExportsDir = Join-Path $ProgramDir "Exports"
+            $LogDir = Join-Path $ProgramDir "Logs"
+            Write-Host "📂 Using custom Program Directory: $ProgramDir"
+        } else {
+            Write-Host "⚠ Invalid or missing directory in config.txt. Resetting to default."
+        }
+    }
+    catch {
+        Write-Host "❌ Error reading config.txt: $_. Using default directories."
+    }
+}
+
+### === Ensure all necessary directories exist ===
+@($ProgramDir, $MasterPDFDir, $ExportsDir, $LogDir) | ForEach-Object {
+    try {
+        if (!(Test-Path $_)) { 
+            if (-not (Test-Path (Split-Path $_))) {
+                throw "Parent directory does not exist: $(Split-Path $_)"
+            }
+            New-Item -ItemType Directory -Path $_ -Force -ErrorAction Stop | Out-Null
+            Write-Host "✅ Created directory: $_"
+        }
+    }
+    catch {
+        Write-Host "❌ Error creating directory '$_': $($_.Exception.Message)"
+    }
+}
+
+# === Introduce Global Batch Variable ===
+$Global:LastBatchFolder = $null  # Stores the most recent batch folder
+
+function Initialize-BatchFolder {
+    # Generate timestamped batch folder
+    $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $BatchFolder = Join-Path $ExportsDir $BatchTimestamp
+
+    # Ensure the batch folder exists
+    if (!(Test-Path $BatchFolder)) {
+        try {
+            New-Item -ItemType Directory -Path $BatchFolder -Force -ErrorAction Stop | Out-Null
+            Write-Host "📂 Created batch folder: $BatchFolder"
+        }
+        catch {
+            Write-Host "❌ Error creating batch folder: $_"
+            return $null  # Return null if creation fails
+        }
+    }
+
+    # Store batch folder globally
+    $Global:LastBatchFolder = $BatchFolder
+    return $BatchFolder
+}
+
+# Initialize batch folder at script startup
+$Global:LastBatchFolder = Initialize-BatchFolder
+
+# === Logging System Improvements ===
+function Start-Logging {
+    param ([string]$BatchTimestamp)
+
+    # Ensure Log Directory Exists
+    if (!(Test-Path $LogDir)) {
+        New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+        Write-Host "✔ Log directory created: $LogDir"
+    }
+
+    # Define batch log file name
+    $LogFileName = "log_$BatchTimestamp.txt"
+    $LogFilePath = Join-Path $LogDir $LogFileName
+    $Global:CurrentLogFile = $LogFilePath  # Store for global reference
+
+    # Remove old logs if more than 10 exist (Auto-archiving feature)
+    $ExistingLogs = Get-ChildItem -Path $LogDir -Filter "log_*.txt" | Sort-Object LastWriteTime -Descending
+    if ($ExistingLogs.Count -gt 10) {
+        $LogsToDelete = $ExistingLogs | Select-Object -Skip 10
+        $LogsToDelete | ForEach-Object { Remove-Item $_.FullName -Force }
+        Write-Host "🗑 Old logs archived. Keeping only the last 10 logs."
+    }
+
+    # Start logging safely
+    try {
+        Start-Transcript -Path $LogFilePath -Append -ErrorAction Stop
+        Write-Host "📝 Logging started for batch: $BatchTimestamp"
+    }
+    catch {
+        Write-Host "⚠ Warning: Failed to start transcript logging. Logging will continue in console."
+    }
+}
+
+function Stop-Logging {
+    try {
+        Stop-Transcript -ErrorAction Stop
+        Write-Host "📁 Log saved: $Global:CurrentLogFile"
+    }
+    catch {
+        Write-Host "⚠ Warning: Failed to stop transcript logging."
+    }
+}
+
+function Log-Message {
+    param (
+        [string]$Message,
+        [string]$Type = "INFO"  # Default log type is INFO
+    )
+
+    # Define timestamp format
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    # Format message based on type
+    switch ($Type) {
+        "INFO" { $FormattedMessage = "[$Timestamp] 🟢 INFO: $Message" }
+        "WARNING" { $FormattedMessage = "[$Timestamp] 🟡 WARNING: $Message" }
+        "ERROR" { $FormattedMessage = "[$Timestamp] 🔴 ERROR: $Message" }
+        default { $FormattedMessage = "[$Timestamp] $Message" }
+    }
+
+    # Write to log file safely
+    if ($Global:CurrentLogFile -and (Test-Path $Global:CurrentLogFile)) {
+        try {
+            Add-Content -Path $Global:CurrentLogFile -Value $FormattedMessage -ErrorAction Stop
+        }
+        catch {
+            Write-Host "⚠ Warning: Unable to write to log file. Logging to console instead."
+            Write-Host $FormattedMessage
+        }
+    }
+    else {
+        Write-Host $FormattedMessage
+    }
+}
+
+# === Overlay System Improvements ===
+function Show-Overlay {
+    param (
+        [int]$ProgressMax,
+        [string]$BatchTimestamp
+    )
+
+    # Prevent duplicate overlays
+    if ($Global:OverlayForm -ne $null -and !$Global:OverlayForm.IsDisposed) {
+        Write-Host "⚠ Overlay already active. Skipping new overlay creation."
+        return
+    }
+
+    # Ensure previous overlay is fully closed
+    if ($Global:OverlayForm -ne $null) {
+        Close-Overlay
+        Start-Sleep -Milliseconds 500  # Shorter delay for smoother UI updates
+    }
+
+    # Create full-screen overlay
+    $Global:OverlayForm = New-Object System.Windows.Forms.Form
+    $Global:OverlayForm.WindowState = "Maximized"
+    $Global:OverlayForm.FormBorderStyle = "None"
+    $Global:OverlayForm.BackColor = [System.Drawing.Color]::FromArgb(245, 245, 245)  # Soft gray Windows 11 theme
+    $Global:OverlayForm.TopMost = $true
+    $Global:OverlayForm.ShowInTaskbar = $false
+
+    # Progress Label (Centered)
+    $Global:LogLabel = New-Object System.Windows.Forms.Label
+    $Global:LogLabel.ForeColor = "Black"
+    $Global:LogLabel.Font = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)  # Larger, modern font
+    $Global:LogLabel.AutoSize = $true
+    $Global:LogLabel.Text = "Processing Batch: $BatchTimestamp..."
+    $Global:LogLabel.Location = New-Object System.Drawing.Point(500, 200)
+    $Global:OverlayForm.Controls.Add($Global:LogLabel)
+
+    # Progress Bar (Centered)
+    $Global:ProgressBar = New-Object System.Windows.Forms.ProgressBar
+    $Global:ProgressBar.Style = "Continuous"
+    $Global:ProgressBar.Maximum = $ProgressMax
+    $Global:ProgressBar.Location = New-Object System.Drawing.Point(300, 300)
+    $Global:ProgressBar.Size = New-Object System.Drawing.Size(600, 30)  # Wider bar
+    $Global:OverlayForm.Controls.Add($Global:ProgressBar)
+
+    # Cancel Button (Centered)
+    $Global:CancelButton = New-Object System.Windows.Forms.Button
+    $Global:CancelButton.Text = "Cancel"
+    $Global:CancelButton.Size = New-Object System.Drawing.Size(200, 50)
+    $Global:CancelButton.Location = New-Object System.Drawing.Point(500, 400)
+    $Global:CancelButton.BackColor = [System.Drawing.Color]::FromArgb(240, 80, 80)
+    $Global:CancelButton.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $Global:CancelButton.ForeColor = "White"
+
+    # Cancel Action
+    $Global:CancelButton.Add_Click({
+        $Global:CancelPrint = $true
+        Write-Host "❌ Process canceled by user."
+        Log-Message "🔴 Process canceled by user." -Type "ERROR"
+        Close-Overlay
+    })
+    $Global:OverlayForm.Controls.Add($Global:CancelButton)
+
+    # Show overlay
+    $Global:OverlayForm.Show()
+    Write-Host "🖥 Full-screen overlay displayed for batch: $BatchTimestamp."
+}
+
+
+# Function to update overlay progress and message dynamically
+function Update-Overlay {
+    param (
+        [string]$Message,
+        [int]$ProgressValue
+    )
+
+    if ($Global:OverlayForm -ne $null) {
+        $Global:LogLabel.Text = $Message
+        $Global:ProgressBar.Value = $ProgressValue
+        $Global:OverlayForm.Refresh()
+        [System.Windows.Forms.Application]::DoEvents()
+        Log-Message "🔄 Overlay Update: $Message (Progress: $ProgressValue)"
+    }
+}
+
+# Function to close overlay safely
+function Close-Overlay {
+    if ($Global:OverlayForm -ne $null) {
+        Write-Host "🛑 Closing overlay..."
+        Log-Message "🛑 Closing overlay."
+
+        $Global:OverlayForm.Invoke([Action] {
+            $Global:LogLabel.Text = "Closing overlay..."
+            Start-Sleep -Seconds 1  # Brief pause to display the message
+            $Global:OverlayForm.Close()
+        }) 
+
+        $Global:OverlayForm.Dispose()
+        $Global:OverlayForm = $null
+        Write-Host "✔ Overlay closed."
+    }
+}
+
+# === Function to Retry Failed Exports (Fixed) ===
+function Retry-FailedExports {
+    param (
+        [array]$FailedExports,
+        [int]$MaxRetries = 3
+    )
+
+    if (-not $FailedExports -or $FailedExports.Count -eq 0) {
+        Log-Message "✅ No failed exports to retry. Skipping retry process."
+        return
+    }
+
+    Write-Host "🔄 Retrying failed exports..."
+    $RetryCount = @{ }
+    $StillFailed = @()
+    $Delay = 2  # Start with 2-second delay between retries
+
+    foreach ($FailedExport in $FailedExports) {
+        if ($FailedExport.OutputName -and -not $RetryCount.ContainsKey($FailedExport.OutputName)) {
+            $RetryCount[$FailedExport.OutputName] = 0
+        }
+    }
+
+    if ($Global:OverlayForm -eq $null) { Show-Overlay -ProgressMax 5 }
+
+    while ($FailedExports.Count -gt 0) {
+        $NewFailedExports = @()
+        
+        foreach ($Export in $FailedExports) {
+            if ([string]::IsNullOrWhiteSpace($Export.OutputName) -or [string]::IsNullOrWhiteSpace($Export.PageRanges)) {
+                Log-Message "⚠ Skipping empty row."
+                continue
+            }
+
+            if (-not $Export.SaveDir -or -not $Export.OutputName) {
+                Log-Message "⚠ Skipping export due to missing SaveDir or OutputName."
+                continue
+            }
+
+            $OutputFilePath = Join-Path $Export.SaveDir "$($Export.OutputName).pdf"
+
+            if (Test-Path $OutputFilePath) {
+                Log-Message "✅ Skipping re-export: File already exists: $OutputFilePath"
+                continue
+            }
+
+            if ($Global:CancelPrint) {
+                Log-Message "❌ Export retry process canceled by user." -Type "ERROR"
+                Close-Overlay
+                return
+            }
+
+            if ($RetryCount[$Export.OutputName] -lt $MaxRetries) {
+                Log-Message "🔄 Retrying export for: $($Export.OutputName)... Attempt: $($RetryCount[$Export.OutputName] + 1)"
+                $Result = Print-PDF -PDFPath $Export.PDFPath -PageRanges $Export.PageRanges -SaveDir $Export.SaveDir -OutputName $Export.OutputName
+                
+                Start-Sleep -Seconds $Delay  # Wait before next retry
+
+                if (($Result -eq $null) -and (Test-Path $OutputFilePath)) {
+                    Log-Message "✅ Successfully retried export: $($Export.OutputName)"
+                } else {
+                    $NewFailedExports += $Result
+                    $RetryCount[$Export.OutputName]++
+                    Log-Message "⚠ Retry $($RetryCount[$Export.OutputName]) failed for: $($Export.OutputName)"
+                }
+            } else {
+                Log-Message "❌ Max retries reached for: $($Export.OutputName). Adding to final failed list." -Type "ERROR"
+                $StillFailed += $Export
+            }
+        }
+
+        $FailedExports = $NewFailedExports
+        $Delay += 2  # Increase delay between retries
+    }
+
+    Close-Overlay
+
+    if ($StillFailed.Count -gt 0) {
+        Log-Message "⚠ The following files failed after $MaxRetries retries:"
+        foreach ($Failed in $StillFailed) {
+            Log-Message "   - $($Failed.OutputName) ($($Failed.PDFPath))" -Type "ERROR"
+        }
+    } else {
+        Log-Message "✅ All previously failed exports were successfully retried."
+    }
+}
+
+
+function Print-PDF {
+    param (
+        [string]$PDFPath,
+        [string]$PageRanges,
+        [string]$SaveDir,
+        [string]$OutputName
+    )
+
+    try {
+        Show-Overlay -ProgressMax 5  # Show overlay
+
+        # Step 1: Open PDF in Edge
+        Update-Overlay -Message "Opening Edge with PDF..." -ProgressValue 1
+        $EdgeProcess = Start-Process -FilePath "msedge.exe" -ArgumentList "`"$PDFPath`"" -PassThru
+        Start-Sleep -Seconds 5  # Ensure PDF is fully loaded
+
+        if ($Global:CancelPrint) { 
+            Write-Host "❌ Print cancelled by user."
+            Close-EdgeTab -PDFPath $PDFPath
+            Close-Overlay
+            return
+        }
+
+        # Step 2: Open Print Dialog
+        Update-Overlay -Message "Opening Print Dialog..." -ProgressValue 2
+        [System.Windows.Forms.SendKeys]::SendWait("^+p")
+        Start-Sleep -Seconds 3
+
+        if ($Global:CancelPrint) { 
+            Write-Host "❌ Print cancelled by user."
+            Close-EdgeTab -PDFPath $PDFPath
+            Close-Overlay
+            return
+        }
+
+        # Step 3: Select Page Range
+        Update-Overlay -Message "Selecting Page Range..." -ProgressValue 3
+        Start-Sleep -Milliseconds 500
+        for ($i=0; $i -lt 4; $i++) {
+            [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+            Start-Sleep -Milliseconds 100
+        }
+        [System.Windows.Forms.SendKeys]::SendWait("$PageRanges")
+        Start-Sleep -Milliseconds 100
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+        Start-Sleep -Milliseconds 500
+
+        if ($Global:CancelPrint) { 
+            Write-Host "❌ Print cancelled by user."
+            Close-EdgeTab -PDFPath $PDFPath
+            Close-Overlay
+            return
+        }
+
+        # Step 4: Set Save Directory (PASTE INSTEAD OF TYPING)
+        Update-Overlay -Message "Selecting Save Directory..." -ProgressValue 4
+        Set-Clipboard -Value $SaveDir  # Copy directory to clipboard
+
+        for ($i=0; $i -lt 6; $i++) {
+            [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+            Start-Sleep -Milliseconds 100
+        }
+
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")  # Open file path selection
+        Start-Sleep -Milliseconds 500
+        [System.Windows.Forms.SendKeys]::SendWait("^v")  # Paste directory path
+        Start-Sleep -Milliseconds 500
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")  # Confirm directory
+        Start-Sleep -Seconds 2
+
+        if ($Global:CancelPrint) { 
+            Write-Host "❌ Print cancelled by user."
+            Close-EdgeTab -PDFPath $PDFPath
+            Close-Overlay
+            return
+        }
+
+        # Step 5: Enter Filename
+        Update-Overlay -Message "Saving File..." -ProgressValue 5
+        for ($i=0; $i -lt 6; $i++) {
+            [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+            Start-Sleep -Milliseconds 100
+        }
+
+        [System.Windows.Forms.SendKeys]::SendWait("$OutputName")
+        Start-Sleep -Milliseconds 500
+        for ($i=0; $i -lt 3; $i++) {
+            [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+            Start-Sleep -Milliseconds 100
+        }
+
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+        Start-Sleep -Seconds 5  # Ensure file is being processed
+
+        if ($Global:CancelPrint) { 
+            Write-Host "❌ Print cancelled by user."
+            Close-EdgeTab -PDFPath $PDFPath
+            Close-Overlay
+            return
+        }
+
+        # Step 6: Verify Output File
+        Update-Overlay -Message "Verifying Output File..." -ProgressValue 5
+        Start-Sleep -Seconds 2
+
+        $OutputFilePath = Join-Path $SaveDir "$OutputName.pdf"
+        $MaxWait = 10  # Max wait time for file to appear
+        $WaitTime = 0
+
+        while (!(Test-Path $OutputFilePath) -and $WaitTime -lt $MaxWait) {
+            Start-Sleep -Seconds 1
+            $WaitTime++
+        }
+
+        if (!(Test-Path $OutputFilePath)) {
+            Write-Host "❌ Error: Output file was not found in $SaveDir after waiting $MaxWait seconds."
+            Update-Overlay -Message "Error: File Not Found" -ProgressValue 0
+            Start-Sleep -Seconds 3
+            Close-EdgeTab -PDFPath $PDFPath
+            Close-Overlay
+            return @{ "PDFPath" = $PDFPath; "PageRanges" = $PageRanges; "SaveDir" = $SaveDir; "OutputName" = $OutputName }
+        } else {
+            Update-Overlay -Message "File Saved Successfully" -ProgressValue 5
+            Write-Host "✅ Print job completed successfully: $OutputFilePath"
+
+            # ✅ Ensure print completes before closing Edge tab
+            Start-Sleep -Seconds 2  
+
+            # ✅ Close only the tab, not the entire browser
+            Write-Host "🧹 Cleaning up..."
+            Update-Overlay -Message "Cleaning up..." -ProgressValue 5
+            Close-EdgeTab -PDFPath $PDFPath
+
+            Close-Overlay
+            return $null
+        }
+
+    } catch {
+        Write-Host "❌ Unexpected error during printing: $_"
+        Update-Overlay -Message "Error: $_" -ProgressValue 0
+        Start-Sleep -Seconds 3
+    } finally {
+        Close-Overlay
+    }
+}
+
+function Close-EdgeTab {
+    param (
+        [string]$PDFPath
+    )
+
+    # Get all Edge processes
+    $EdgeProcesses = Get-Process -Name "msedge" -ErrorAction SilentlyContinue
+
+    foreach ($Process in $EdgeProcesses) {
+        $WindowTitle = (Get-Process -Id $Process.Id -ErrorAction SilentlyContinue | Select-Object -ExpandProperty MainWindowTitle)
+
+        if ($WindowTitle -match [System.IO.Path]::GetFileNameWithoutExtension($PDFPath)) {
+            Write-Host "🧹 Closing Edge tab: $WindowTitle"
+            Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+            return
+        }
+    }
+
+    Write-Host "⚠️ No matching Edge tab found for $PDFPath"
+}
+
+function Move-ExportedFiles {
+    param ([string]$BatchFolder)
+
+    Write-Host "🔍 Checking batch folder: $BatchFolder"
+
+    if (!(Test-Path $BatchFolder)) {
+        Write-Host "❌ Error: Batch folder not found: $BatchFolder"
+        Log-Message "❌ Error: Batch folder not found: $BatchFolder" -Type "ERROR"
+        return
+    }
+
+    # List files before moving
+    $ExportedFiles = Get-ChildItem -Path $BatchFolder -Filter "*.pdf" | Where-Object {
+        -not $_.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and 
+        -not $_.Attributes.HasFlag([System.IO.FileAttributes]::System)
+    }
+
+    Write-Host "📄 Found $($ExportedFiles.Count) exported PDF files."
+
+    if ($ExportedFiles.Count -eq 0) {
+        Write-Host "⚠ No exported files found. Exiting move process."
+        Log-Message "⚠ No exported files found in $BatchFolder."
+        return
+    }
+
+    # Open folder selection dialog
+    Add-Type -AssemblyName System.Windows.Forms
+    $FolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $FolderDialog.Description = "Select Destination Folder to Move Exported PDFs"
+    $DialogResult = $FolderDialog.ShowDialog()
+
+    if ($DialogResult -eq "OK") {
+        $DestinationFolder = $FolderDialog.SelectedPath
+        Write-Host "📂 Moving files to: $DestinationFolder"
+        Log-Message "📂 User selected destination: $DestinationFolder"
+
+        foreach ($File in $ExportedFiles) {
+            $DestinationPath = Join-Path $DestinationFolder $File.Name
+
+            # Check for overwrite conflicts
+            if (Test-Path $DestinationPath) {
+                Write-Host "⚠ File already exists: $DestinationPath"
+                $Response = [System.Windows.Forms.MessageBox]::Show("File $($File.Name) already exists. Overwrite?", "File Exists", "YesNoCancel", "Warning")
+
+                if ($Response -eq "Yes") {
+                    Move-Item -Path $File.FullName -Destination $DestinationPath -Force -ErrorAction Stop
+                    Write-Host "✅ Overwritten: $($File.Name)"
+                } elseif ($Response -eq "No") {
+                    $NewName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name) + "_Copy" + [System.IO.Path]::GetExtension($File.Name)
+                    $NewDestinationPath = Join-Path $DestinationFolder $NewName
+                    Move-Item -Path $File.FullName -Destination $NewDestinationPath -Force -ErrorAction Stop
+                    Write-Host "✅ Renamed and moved: $($File.Name) → $NewDestinationPath"
+                } else {
+                    Write-Host "⚠ Skipping file: $($File.Name)"
+                    continue
+                }
+            } else {
+                try {
+                    Move-Item -Path $File.FullName -Destination $DestinationPath -Force -ErrorAction Stop
+                    Write-Host "✅ Moved: $($File.Name) → $DestinationPath"
+                }
+                catch {
+                    Write-Host "❌ Error moving file '$($File.Name)': $($_.Exception.Message)"
+                }
+            }
+        }
+
+        # Confirm success
+        [System.Windows.Forms.MessageBox]::Show("All exported PDFs have been successfully moved to:`n$DestinationFolder", "Move Completed", "OK", "Information")
+        Log-Message "✅ All exported files successfully moved."
+    } else {
+        Write-Host "⚠ User canceled file movement."
+        Log-Message "⚠ User canceled file movement."
+    }
+}
+
+# === GUI Form Setup (Modern Windows 11 Look) ===
+$Form = New-Object System.Windows.Forms.Form
+$Form.Text = "PDF Extractor"
+$Form.Size = New-Object System.Drawing.Size(1300, 650)  # Adjusted to fit everything
+$Form.StartPosition = "CenterScreen"
+$Form.BackColor = [System.Drawing.Color]::FromArgb(245, 245, 245)  # Soft Gray Windows 11 Look
+$Form.FormBorderStyle = "FixedDialog"  # Prevent resizing
+
+# Use Windows 11 Font
+$Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Regular)
+
+# === DataGridView (Fixed Size & Centered) ===
+$DataGridView = New-Object System.Windows.Forms.DataGridView
+$DataGridView.Location = New-Object System.Drawing.Point(20, 20)  
+$DataGridView.Size = New-Object System.Drawing.Size(1160, 450)  # Fixed size
+$DataGridView.AutoSizeColumnsMode = "Fill"
+$DataGridView.AllowUserToAddRows = $true
+$DataGridView.BorderStyle = "None"
+$DataGridView.BackgroundColor = [System.Drawing.Color]::WhiteSmoke
+$DataGridView.Font = $Font
+
+# Add DataGridView to the form
+$Form.Controls.Add($DataGridView)
+
+# === Adjust Button Layout (Proper Spacing & Centering) ===
+$ButtonWidth = 170  
+$ButtonHeight = 40  
+$Spacing = 10  # Reduced spacing for better alignment
+$TotalButtons = 7  # Includes "Clear Grid"
+$TotalWidth = ($ButtonWidth * $TotalButtons) + ($Spacing * ($TotalButtons - 1))  
+$StartX = [Math]::Max(20, ($Form.ClientSize.Width - $TotalWidth) / 2)  
+$StartY = 520  # Positioned closer to the grid
+
+function Create-RoundedButton($text, $x, $y, $clickEvent) {
+    $Button = New-Object System.Windows.Forms.Button
+    $Button.Text = $text
+    $Button.Size = New-Object System.Drawing.Size($ButtonWidth, $ButtonHeight)
+    $Button.Location = New-Object System.Drawing.Point($x, $y)
+    $Button.BackColor = [System.Drawing.Color]::FromArgb(220, 220, 220)  
+    $Button.FlatStyle = "Flat"
+    $Button.FlatAppearance.BorderSize = 1
+    $Button.Font = $Font
+    $Button.Add_Click($clickEvent)
+    return $Button
+}
+
+# === Create & Add Buttons with Corrected Spacing ===
+$BtnUploadPDF = Create-RoundedButton "Upload PDF" $StartX $StartY {}
+$Form.Controls.Add($BtnUploadPDF)
+
+$BtnMassMasterPDFs = Create-RoundedButton "Mass Input Master PDFs" ($StartX + ($ButtonWidth + $Spacing) * 1) $StartY {}
+$Form.Controls.Add($BtnMassMasterPDFs)
+
+$BtnMassInput = Create-RoundedButton "Mass Input Output Name" ($StartX + ($ButtonWidth + $Spacing) * 2) $StartY {}
+$Form.Controls.Add($BtnMassInput)
+
+$BtnPageRange = Create-RoundedButton "Mass Input Page Range" ($StartX + ($ButtonWidth + $Spacing) * 3) $StartY {}
+$Form.Controls.Add($BtnPageRange)
+
+$BtnStart = Create-RoundedButton "Start" ($StartX + ($ButtonWidth + $Spacing) * 4) $StartY {}
+$Form.Controls.Add($BtnStart)
+
+$BtnRetry = Create-RoundedButton "Retry Failed" ($StartX + ($ButtonWidth + $Spacing) * 5) $StartY {}
+$Form.Controls.Add($BtnRetry)
+
+# === Clear Grid Button (Final Button) ===
+$BtnClearGrid = Create-RoundedButton "Clear Grid" ($StartX + ($ButtonWidth + $Spacing) * 6) $StartY {
+    $Confirm = [System.Windows.Forms.MessageBox]::Show("Are you sure you want to clear all data?", "Clear Grid", "YesNo", "Warning")
+
+    if ($Confirm -eq "Yes") {
+        $DataTable.Clear()  
+        Write-Host "🔄 Grid cleared successfully."
+    }
+}
+$Form.Controls.Add($BtnClearGrid)
+
+# === Create DataTable (Remove Dropdown, Keep Text Input for Master PDF) ===
+$DataTable = New-Object System.Data.DataTable
+$DataTable.Columns.Add("Master PDF", [string]) | Out-Null  
+$DataTable.Columns.Add("Output Name") | Out-Null
+$DataTable.Columns.Add("Page Range") | Out-Null
+$DataGridView.DataSource = $DataTable
+
+# === Enable Auto-Complete for Master PDFs ===
+function Enable-AutoComplete {
+    $MasterPDFs = Get-ChildItem -Path $MasterPDFDir -Filter "*.pdf" | Select-Object -ExpandProperty Name
+
+    foreach ($Row in $DataGridView.Rows) {
+        if ($Row.Cells["Master PDF"] -is [System.Windows.Forms.DataGridViewTextBoxCell]) {
+            $AutoComplete = New-Object System.Windows.Forms.AutoCompleteStringCollection
+            $AutoComplete.AddRange($MasterPDFs)
+
+            $TextBox = New-Object System.Windows.Forms.TextBox
+            $TextBox.AutoCompleteMode = "SuggestAppend"
+            $TextBox.AutoCompleteSource = "CustomSource"
+            $TextBox.AutoCompleteCustomSource = $AutoComplete
+
+            # Attach the textbox to the cell for auto-completion
+            $Row.Cells["Master PDF"].Tag = $TextBox
+        }
+    }
+}
+
+# Call function on form load to populate suggestions
+Enable-AutoComplete
+
+# === CLEAR GRID BUTTON (Aligned & Styled) ===
+$BtnClearGrid = Create-RoundedButton "Clear Grid" ($StartX + ($ButtonWidth + $Spacing) * 6) $StartY {
+    $Confirm = [System.Windows.Forms.MessageBox]::Show("Are you sure you want to clear all data?", "Clear Grid", "YesNo", "Warning")
+
+    if ($Confirm -eq "Yes") {
+        $DataTable.Clear()  # Clears all rows but retains column headers
+        Write-Host "🔄 Grid cleared successfully."
+    }
+}
+
+$Form.Controls.Add($BtnClearGrid)
+
+# === Ensure Resizing Adjusts Grid Size ===
+$Form.Add_Resize({
+    $DataGridView.Size = New-Object System.Drawing.Size($Form.ClientSize.Width - 40, $StartY - 60)
+})
+
+
+# === Upload PDF Button Functionality ===
+$BtnUploadPDF.Add_Click({
+    $Dialog = New-Object System.Windows.Forms.OpenFileDialog
+    $Dialog.Filter = "PDF Files (*.pdf)|*.pdf"
+    if ($Dialog.ShowDialog() -eq "OK") {
+        $FileName = [System.IO.Path]::GetFileName($Dialog.FileName)
+        $DestPath = Join-Path $MasterPDFDir $FileName
+        Copy-Item -Path $Dialog.FileName -Destination $DestPath -Force
+        Refresh-PDFList
+    }
+})
+
+# === Function: Refresh the Master PDF List in ComboBox ===
+function Refresh-PDFList {
+    try {
+        # Ensure the directory exists
+        if (!(Test-Path $MasterPDFDir)) {
+            New-Item -ItemType Directory -Path $MasterPDFDir -Force | Out-Null
+        }
+
+        # Get all PDFs from the Master PDF directory
+        $PDFs = Get-ChildItem -Path $MasterPDFDir -Filter "*.pdf" | Select-Object -ExpandProperty Name
+
+        # Ensure the DataGridView ComboBox column exists
+        if ($PDFColumn -ne $null) {
+            $PDFColumn.Items.Clear()  # Clear old entries
+
+            # Populate the ComboBox with available PDFs
+            foreach ($PDF in $PDFs) {
+                $PDFColumn.Items.Add($PDF) | Out-Null
+            }
+
+            Log-Message "📃 Master PDF list refreshed. Found $($PDFs.Count) PDFs."
+        } else {
+            Log-Message "⚠ Warning: PDFColumn not found. Ensure the DataGridView ComboBox is properly initialized."
+        }
+    }
+    catch {
+        Log-Message "❌ Error refreshing PDF list: $_" -Type "ERROR"
+    }
+}
+
+# === Mass Input for Master PDFs (Each New Line Becomes a New Row) ===
+$BtnMassMasterPDFs.Add_Click({
+    $InputForm = New-Object System.Windows.Forms.Form
+    $InputForm.Text = "Mass Input Master PDFs"
+    $InputForm.Size = New-Object System.Drawing.Size(400, 300)
+    $InputForm.StartPosition = "CenterScreen"
+
+    # Create Multi-line TextBox
+    $TextBox = New-Object System.Windows.Forms.TextBox
+    $TextBox.Multiline = $true
+    $TextBox.Size = New-Object System.Drawing.Size(350, 200)
+    $TextBox.Location = New-Object System.Drawing.Point(20, 20)
+    $InputForm.Controls.Add($TextBox)
+
+    # OK Button
+    $OkButton = New-Object System.Windows.Forms.Button
+    $OkButton.Text = "OK"
+    $OkButton.Location = New-Object System.Drawing.Point(150, 230)
+    $OkButton.Size = New-Object System.Drawing.Size(80, 30)
+
+    # Click Event: Process Input
+    $OkButton.Add_Click({
+        $Entries = $TextBox.Text -split "`r`n"  # Split input by new lines
+
+        foreach ($MasterPDFValue in $Entries) {
+            $MasterPDFValue = $MasterPDFValue.Trim()
+
+            if (![string]::IsNullOrWhiteSpace($MasterPDFValue)) {
+                $NewRow = $DataTable.NewRow()
+                $NewRow["Master PDF"] = $MasterPDFValue
+                $NewRow["Output Name"] = ""  # Placeholder for other fields
+                $NewRow["Page Range"] = ""
+                $DataTable.Rows.Add($NewRow)
+            }
+        }
+
+        Enable-AutoComplete  # Refresh auto-complete suggestions
+        $InputForm.Close()
+    })
+
+    $InputForm.Controls.Add($OkButton)
+    $InputForm.ShowDialog()
+})
+
+
+# === Mass Input for Page Ranges ===
+$BtnPageRange.Add_Click({
+    $InputForm = New-Object System.Windows.Forms.Form
+    $InputForm.Text = "Mass Input Page Ranges"
+    $InputForm.Size = New-Object System.Drawing.Size(400, 300)
+    $InputForm.StartPosition = "CenterScreen"
+
+    # Create Multi-line TextBox
+    $TextBox = New-Object System.Windows.Forms.TextBox
+    $TextBox.Multiline = $true
+    $TextBox.Size = New-Object System.Drawing.Size(350, 200)
+    $TextBox.Location = New-Object System.Drawing.Point(20, 20)
+    $InputForm.Controls.Add($TextBox)
+
+    # OK Button
+    $OkButton = New-Object System.Windows.Forms.Button
+    $OkButton.Text = "OK"
+    $OkButton.Location = New-Object System.Drawing.Point(150, 230)
+    $OkButton.Size = New-Object System.Drawing.Size(80, 30)
+
+    # Process Input on OK Click
+    $OkButton.Add_Click({
+        $Entries = $TextBox.Text -split "`r`n"  # Corrected line splitting
+
+        for ($i = 0; $i -lt $Entries.Length; $i++) {
+            $PageRangeValue = $Entries[$i].Trim()
+
+            if (![string]::IsNullOrWhiteSpace($PageRangeValue)) {
+                # Ensure enough rows exist in the DataTable
+                while ($i -ge $DataTable.Rows.Count) {
+                    $DataTable.Rows.Add("", "", "")  # Ensure all columns exist
+                }
+                $DataTable.Rows[$i]["Page Range"] = $PageRangeValue  # Assign value
+            }
+        }
+        $InputForm.Close()
+    })
+
+    $InputForm.Controls.Add($OkButton)
+    $InputForm.ShowDialog()
+})
+
+# === Mass Input for Output Names ===
+$BtnMassInput.Add_Click({
+    $InputForm = New-Object System.Windows.Forms.Form
+    $InputForm.Text = "Mass Input Output Names"
+    $InputForm.Size = New-Object System.Drawing.Size(400, 300)
+    $InputForm.StartPosition = "CenterScreen"
+
+    # Create Multi-line TextBox
+    $TextBox = New-Object System.Windows.Forms.TextBox
+    $TextBox.Multiline = $true
+    $TextBox.Size = New-Object System.Drawing.Size(350, 200)
+    $TextBox.Location = New-Object System.Drawing.Point(20, 20)
+    $InputForm.Controls.Add($TextBox)
+
+    # OK Button
+    $OkButton = New-Object System.Windows.Forms.Button
+    $OkButton.Text = "OK"
+    $OkButton.Location = New-Object System.Drawing.Point(150, 230)
+    $OkButton.Size = New-Object System.Drawing.Size(80, 30)
+
+    # Process Input on OK Click
+    $OkButton.Add_Click({
+        $Entries = $TextBox.Text -split "`r`n"  # Corrected line splitting
+
+        for ($i = 0; $i -lt $Entries.Length; $i++) {
+            $OutputNameValue = $Entries[$i].Trim()
+
+            if (![string]::IsNullOrWhiteSpace($OutputNameValue)) {
+                # Ensure enough rows exist in the DataTable
+                while ($i -ge $DataTable.Rows.Count) {
+                    $DataTable.Rows.Add("", "", "")  # Ensure all columns exist
+                }
+                $DataTable.Rows[$i]["Output Name"] = $OutputNameValue  # Assign value
+            }
+        }
+        $InputForm.Close()
+    })
+
+    $InputForm.Controls.Add($OkButton)
+    $InputForm.ShowDialog()
+})
+
+
+# === Initialize GUI and Populate PDF List Before Displaying ===
+Refresh-PDFList  # Call function to ensure the PDF list is preloaded
+
+# ==== START BUTTON (With Full Validation) ====
+$BtnStart.Add_Click({
+    $FailedExports = @()  # Reset failed export tracking
+    $InvalidPDFs = @()  # Store invalid PDFs
+    $InvalidPageRanges = @()  # Store invalid page range entries
+    $DuplicateOutputNames = @()  # Store duplicate output names
+    $OutputNameSet = @{}  # Track seen output names to find duplicates
+    $ValidRows = 0  # Track number of valid rows
+
+    # Generate batch timestamp
+    $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $BatchFolder = Join-Path $ExportsDir $BatchTimestamp
+
+    # Regular expression for valid page ranges (e.g., 9-12,57-60)
+    $PageRangePattern = "^\d+(-\d+)?(,\d+(-\d+)?)*$"
+
+    # Validate PDFs, Page Ranges, and Output Names before starting
+    $TotalRows = $DataGridView.Rows.Count - 1
+    for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
+        $Row = $DataGridView.Rows[$RowIndex]
+        $PDFFileName = $Row.Cells["Master PDF"].Value
+        $OutputName = $Row.Cells["Output Name"].Value
+        $PageRanges = $Row.Cells["Page Range"].Value
+        $PDFPath = Join-Path $MasterPDFDir $PDFFileName
+
+        # Skip completely empty rows
+        if ([string]::IsNullOrWhiteSpace($PDFFileName) -and
+            [string]::IsNullOrWhiteSpace($OutputName) -and
+            [string]::IsNullOrWhiteSpace($PageRanges)) {
+            continue
+        }
+
+        # Count valid rows
+        $ValidRows++
+
+        # Check if PDF file exists
+        if (![string]::IsNullOrWhiteSpace($PDFFileName) -and !(Test-Path $PDFPath)) {
+            $InvalidPDFs += "$PDFFileName (Row: $($RowIndex + 1))"
+        }
+
+        # Check if Page Range format is correct
+        if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -notmatch $PageRangePattern) {
+            $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
+        }
+
+        # Check for duplicate Output Names
+        if (![string]::IsNullOrWhiteSpace($OutputName)) {
+            if ($OutputNameSet.ContainsKey($OutputName)) {
+                $DuplicateOutputNames += "Row $($RowIndex + 1): $OutputName"
+            } else {
+                $OutputNameSet[$OutputName] = $true
+            }
+        }
+    }
+
+    # Prevent start if there are no valid rows
+    if ($ValidRows -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("🚨 No valid rows found. Please enter at least one row before starting.", "Validation Error", "OK", "Error")
+        return  # Stop execution
+    }
+
+    # If there are validation errors, show an error window and stop execution
+    if ($InvalidPDFs.Count -gt 0 -or $InvalidPageRanges.Count -gt 0 -or $DuplicateOutputNames.Count -gt 0) {
+        $ErrorMessage = ""
+        if ($InvalidPDFs.Count -gt 0) {
+            $ErrorMessage += "🚨 The following PDFs are missing or invalid:`n" + ($InvalidPDFs -join "`n") + "`n`n"
+        }
+        if ($InvalidPageRanges.Count -gt 0) {
+            $ErrorMessage += "⚠ The following rows have invalid page ranges:`n" + ($InvalidPageRanges -join "`n") + "`n`n"
+        }
+        if ($DuplicateOutputNames.Count -gt 0) {
+            $ErrorMessage += "❌ The following output names are duplicated:`n" + ($DuplicateOutputNames -join "`n") + "`n`n"
+        }
+
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Validation Errors", "OK", "Error")
+        return  # Stop execution
+    }
+
+    # Ensure batch folder exists
+    if (!(Test-Path $BatchFolder)) {
+        try {
+            New-Item -ItemType Directory -Path $BatchFolder | Out-Null
+            Write-Host "📂 Created new batch folder: $BatchFolder"
+        }
+        catch {
+            Write-Host "❌ Error creating batch folder: $_"
+            return
+        }
+    }
+
+    # Start logging
+    Start-Logging -BatchTimestamp $BatchTimestamp
+    Show-Overlay -ProgressMax 5 -BatchTimestamp $BatchTimestamp
+
+    # Process each row in the DataGridView
+    for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
+        $Row = $DataGridView.Rows[$RowIndex]
+        $PDFFileName = $Row.Cells["Master PDF"].Value
+        $OutputName = $Row.Cells["Output Name"].Value
+        $PageRanges = $Row.Cells["Page Range"].Value
+        $PDFPath = Join-Path $MasterPDFDir $PDFFileName
+        $SaveDir = $BatchFolder
+
+        # Skip rows with missing required data
+        if ([string]::IsNullOrWhiteSpace($PDFFileName) -or
+            [string]::IsNullOrWhiteSpace($OutputName) -or
+            [string]::IsNullOrWhiteSpace($PageRanges)) {
+            Write-Host "⚠ Skipping empty or incomplete row: $($RowIndex + 1)"
+            continue
+        }
+
+        # Attempt to print the PDF
+        $Result = Print-PDF -PDFPath $PDFPath -PageRanges $PageRanges -SaveDir $SaveDir -OutputName $OutputName
+        if ($Result -ne $null) {
+            $FailedExports += $Result
+        }
+    }
+
+    # Retry failed exports if necessary
+    if ($FailedExports.Count -gt 0) {
+        Write-Host "🔄 Retrying failed exports..."
+        Retry-FailedExports -FailedExports $FailedExports
+    }
+
+    # Close overlay once processing is done
+    Close-Overlay
+
+    # Store batch folder globally for later file movement
+    $Global:LastBatchFolder = $BatchFolder
+    Write-Host "✅ Batch completed: $BatchFolder"
+
+    # Move exported files to user-selected destination
+    Move-ExportedFiles -BatchFolder $BatchFolder
+
+    # Stop logging
+    Stop-Logging
+})
+
+# Start logging
+Start-Logging
+
+# === Start GUI ===
+$Form.ShowDialog()
+
+# Stop logging once the form is closed
+Stop-Logging
