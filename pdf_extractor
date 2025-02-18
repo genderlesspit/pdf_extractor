@@ -894,7 +894,7 @@ $BtnMassInput.Add_Click({
 # === Initialize GUI and Populate PDF List Before Displaying ===
 Refresh-PDFList  # Call function to ensure the PDF list is preloaded
 
-# ==== START BUTTON (With Full Validation & Controlled Auto-Fix) ====
+# ==== START BUTTON (With Full Validation & Auto-Fix) ====
 $BtnStart.Add_Click({
     $FailedExports = @()  # Reset failed export tracking
     $InvalidPDFs = @()  # Store invalid PDFs
@@ -975,32 +975,19 @@ $BtnStart.Add_Click({
         return  # Stop execution
     }
 
-    # If invalid page ranges exist, prompt user to manually fix first
+    # If invalid page ranges exist, notify user **before auto-fixing**
     if ($InvalidPageRanges.Count -gt 0) {
-        $ErrorMessage = "⚠ The following rows have invalid page ranges (spaces or incorrect format):`n" + ($InvalidPageRanges -join "`n") + "`n`n"
-        $ErrorMessage += "Please manually fix the page ranges in the grid and click Start again."
+        $ErrorMessage = "⚠ Error detected in page ranges (spaces or incorrect format).`n`n"
+        $ErrorMessage += "🚀 Auto-fixing all page ranges now..."
 
-        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Fix Page Ranges", "OK", "Warning")
-        return  # **Stop execution until user manually fixes page ranges**
-    }
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Auto-Fixing Page Ranges", "OK", "Warning")
 
-    # If invalid page ranges still exist, offer to auto-fix
-    if ($FixedPageRanges.Count -gt 0) {
-        $PromptMessage = "Would you like to automatically fix the following page ranges?`n" + ($FixedPageRanges.Values -join "`n") + "`n`n"
-        $PromptMessage += "This will remove spaces and apply correct formatting."
-
-        $UserChoice = [System.Windows.Forms.MessageBox]::Show($PromptMessage, "Auto-Fix Page Ranges", "YesNo", "Question")
-
-        if ($UserChoice -eq "Yes") {
-            foreach ($RowIndex in $FixedPageRanges.Keys) {
-                $Row = $DataGridView.Rows[$RowIndex]
-                $Row.Cells["Page Range"].Value = $FixedPageRanges[$RowIndex]
-            }
-            Write-Host "✅ Auto-fixed page ranges."
-        } else {
-            Write-Host "❌ User declined auto-fixing page ranges. **Execution will not proceed.**"
-            return  # **Hard stop if page ranges are not fixed**
+        # Perform auto-fix
+        foreach ($RowIndex in $FixedPageRanges.Keys) {
+            $Row = $DataGridView.Rows[$RowIndex]
+            $Row.Cells["Page Range"].Value = $FixedPageRanges[$RowIndex]
         }
+        Write-Host "✅ Auto-fixed all page ranges."
     }
 
     # Ensure batch folder exists
