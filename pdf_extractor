@@ -942,7 +942,13 @@ $BtnStart.Add_Click({
             }
         }
 
-        # Fix Page Ranges if invalid
+        # Detect spaces in Page Ranges and auto-fix them
+        if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -match "\s") {
+            Write-Host "⚠ Detected spaces in Page Range: $PageRanges (Row $RowIndex)"
+            $FixedPageRanges[$RowIndex] = Format-PageRange $PageRanges
+        }
+
+        # Check if Page Range format is valid after removing spaces
         if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -notmatch "^\d+(-\d+)?(,\d+(-\d+)?)*$") {
             $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
             $FixedPageRanges[$RowIndex] = Format-PageRange $PageRanges
@@ -965,9 +971,9 @@ $BtnStart.Add_Click({
     }
 
     # If invalid page ranges exist, ask user to auto-fix them
-    if ($InvalidPageRanges.Count -gt 0) {
-        $PromptMessage = "⚠ The following rows have invalid page ranges:`n" + ($InvalidPageRanges -join "`n") + "`n`n"
-        $PromptMessage += "Would you like to automatically fix these page ranges?"
+    if ($InvalidPageRanges.Count -gt 0 -or $FixedPageRanges.Count -gt 0) {
+        $PromptMessage = "⚠ The following rows have invalid or incorrectly formatted page ranges:`n" + ($InvalidPageRanges -join "`n") + "`n`n"
+        $PromptMessage += "Would you like to automatically fix these page ranges by removing spaces and applying correct formatting?"
 
         $UserChoice = [System.Windows.Forms.MessageBox]::Show($PromptMessage, "Auto-Fix Page Ranges", "YesNo", "Question")
 
