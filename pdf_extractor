@@ -774,8 +774,9 @@ $BtnMassMasterPDFs.Add_Click({
     $InputForm.Text = "Mass Input Master PDFs"
     $InputForm.Size = New-Object System.Drawing.Size(400, 300)
     $InputForm.StartPosition = "CenterScreen"
+    $InputForm.TopMost = $true  # Prevents Alt+Tab issues
 
-    # Create Multi-line TextBox
+    # Multi-line TextBox
     $TextBox = New-Object System.Windows.Forms.TextBox
     $TextBox.Multiline = $true
     $TextBox.Size = New-Object System.Drawing.Size(350, 200)
@@ -788,15 +789,13 @@ $BtnMassMasterPDFs.Add_Click({
     $OkButton.Location = New-Object System.Drawing.Point(150, 230)
     $OkButton.Size = New-Object System.Drawing.Size(80, 30)
 
-    # Click Event: Process Input
+    # Process Input on OK Click
     $OkButton.Add_Click({
-        $Entries = $TextBox.Text -split "`r`n"  # Corrected line splitting
+        $Entries = $TextBox.Text -split "`r`n"
 
         foreach ($MasterPDFValue in $Entries) {
             $MasterPDFValue = $MasterPDFValue.Trim()
-
             if (![string]::IsNullOrWhiteSpace($MasterPDFValue)) {
-                # Ensure the row count before assigning values
                 $NewRow = $DataTable.NewRow()
                 $NewRow["Master PDF"] = $MasterPDFValue
                 $DataTable.Rows.Add($NewRow)
@@ -805,11 +804,15 @@ $BtnMassMasterPDFs.Add_Click({
 
         Enable-AutoComplete  # Refresh auto-complete suggestions
         $InputForm.Close()
+        $Form.Activate()  # Ensure main form regains focus
     })
 
     $InputForm.Controls.Add($OkButton)
-    $InputForm.ShowDialog()
+
+    # Use Show() instead of ShowDialog() to prevent Alt+Tab crashes
+    $InputForm.Show()
 })
+
 
 # === Mass Input for Page Ranges ===
 $BtnPageRange.Add_Click({
@@ -817,8 +820,9 @@ $BtnPageRange.Add_Click({
     $InputForm.Text = "Mass Input Page Ranges"
     $InputForm.Size = New-Object System.Drawing.Size(400, 300)
     $InputForm.StartPosition = "CenterScreen"
+    $InputForm.TopMost = $true  
 
-    # Create Multi-line TextBox
+    # Multi-line TextBox
     $TextBox = New-Object System.Windows.Forms.TextBox
     $TextBox.Multiline = $true
     $TextBox.Size = New-Object System.Drawing.Size(350, 200)
@@ -831,27 +835,25 @@ $BtnPageRange.Add_Click({
     $OkButton.Location = New-Object System.Drawing.Point(150, 230)
     $OkButton.Size = New-Object System.Drawing.Size(80, 30)
 
-    # Process Input on OK Click
     $OkButton.Add_Click({
         $Entries = $TextBox.Text -split "`r`n"
-
         for ($i = 0; $i -lt $Entries.Length; $i++) {
             $PageRangeValue = $Entries[$i].Trim()
-
             if (![string]::IsNullOrWhiteSpace($PageRangeValue)) {
-                # Ensure enough rows exist before assigning values
                 while ($i -ge $DataTable.Rows.Count) {
-                    $DataTable.Rows.Add("", "", "")  # Ensure all columns exist
+                    $DataTable.Rows.Add("", "", "")  
                 }
                 $DataTable.Rows[$i]["Page Range"] = $PageRangeValue
             }
         }
         $InputForm.Close()
+        $Form.Activate()  # Ensure main form regains focus
     })
 
     $InputForm.Controls.Add($OkButton)
-    $InputForm.ShowDialog()
+    $InputForm.Show()
 })
+
 
 # === Mass Input for Output Names ===
 $BtnMassInput.Add_Click({
@@ -859,8 +861,9 @@ $BtnMassInput.Add_Click({
     $InputForm.Text = "Mass Input Output Names"
     $InputForm.Size = New-Object System.Drawing.Size(400, 300)
     $InputForm.StartPosition = "CenterScreen"
+    $InputForm.TopMost = $true  
 
-    # Create Multi-line TextBox
+    # Multi-line TextBox
     $TextBox = New-Object System.Windows.Forms.TextBox
     $TextBox.Multiline = $true
     $TextBox.Size = New-Object System.Drawing.Size(350, 200)
@@ -873,26 +876,23 @@ $BtnMassInput.Add_Click({
     $OkButton.Location = New-Object System.Drawing.Point(150, 230)
     $OkButton.Size = New-Object System.Drawing.Size(80, 30)
 
-    # Process Input on OK Click
     $OkButton.Add_Click({
         $Entries = $TextBox.Text -split "`r`n"
-
         for ($i = 0; $i -lt $Entries.Length; $i++) {
             $OutputNameValue = $Entries[$i].Trim()
-
             if (![string]::IsNullOrWhiteSpace($OutputNameValue)) {
-                # Ensure enough rows exist before assigning values
                 while ($i -ge $DataTable.Rows.Count) {
-                    $DataTable.Rows.Add("", "", "")  # Ensure all columns exist
+                    $DataTable.Rows.Add("", "", "")  
                 }
                 $DataTable.Rows[$i]["Output Name"] = $OutputNameValue
             }
         }
         $InputForm.Close()
+        $Form.Activate()  # Ensure main form regains focus
     })
 
     $InputForm.Controls.Add($OkButton)
-    $InputForm.ShowDialog()
+    $InputForm.Show()
 })
 
 # === Initialize GUI and Populate PDF List Before Displaying ===
