@@ -894,7 +894,7 @@ $BtnMassInput.Add_Click({
 # === Initialize GUI and Populate PDF List Before Displaying ===
 Refresh-PDFList  # Call function to ensure the PDF list is preloaded
 
-# ==== START BUTTON (With Full Validation & Auto-Correction) ====
+# ==== START BUTTON (With Full Validation & Strict Error Handling) ====
 $BtnStart.Add_Click({
     $FailedExports = @()  # Reset failed export tracking
     $InvalidPDFs = @()  # Store invalid PDFs
@@ -907,6 +907,9 @@ $BtnStart.Add_Click({
     # Generate batch timestamp
     $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $BatchFolder = Join-Path $ExportsDir $BatchTimestamp
+
+    # Regular expression for valid page ranges (e.g., 9-12,57-60)
+    $PageRangePattern = "^\d+(-\d+)?(,\d+(-\d+)?)*$"
 
     # Validate PDFs, Page Ranges, and Output Names before starting
     $TotalRows = $DataGridView.Rows.Count - 1
@@ -942,14 +945,16 @@ $BtnStart.Add_Click({
             }
         }
 
-        # Detect spaces in Page Ranges and auto-fix them
+        # Detect spaces in Page Ranges and mark them as errors
         if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -match "\s") {
-            Write-Host "⚠ Detected spaces in Page Range: $PageRanges (Row $RowIndex)"
+            Write-Host "❌ Invalid Page Range detected (Row $RowIndex): $PageRanges"
+            $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
             $FixedPageRanges[$RowIndex] = Format-PageRange $PageRanges
         }
 
-        # Check if Page Range format is valid after removing spaces
-        if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -notmatch "^\d+(-\d+)?(,\d+(-\d+)?)*$") {
+        # Check if Page Range format is valid after fixing spaces
+        if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -notmatch $PageRangePattern) {
+            Write-Host "❌ Incorrectly formatted Page Range detected: $PageRanges"
             $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
             $FixedPageRanges[$RowIndex] = Format-PageRange $PageRanges
         }
@@ -972,7 +977,7 @@ $BtnStart.Add_Click({
 
     # If invalid page ranges exist, ask user to auto-fix them
     if ($InvalidPageRanges.Count -gt 0 -or $FixedPageRanges.Count -gt 0) {
-        $PromptMessage = "⚠ The following rows have invalid or incorrectly formatted page ranges:`n" + ($InvalidPageRanges -join "`n") + "`n`n"
+        $PromptMessage = "⚠ The following rows have invalid page ranges (spaces or incorrect format):`n" + ($InvalidPageRanges -join "`n") + "`n`n"
         $PromptMessage += "Would you like to automatically fix these page ranges by removing spaces and applying correct formatting?"
 
         $UserChoice = [System.Windows.Forms.MessageBox]::Show($PromptMessage, "Auto-Fix Page Ranges", "YesNo", "Question")
@@ -984,22 +989,9 @@ $BtnStart.Add_Click({
             }
             Write-Host "✅ Auto-fixed page ranges."
         } else {
-            Write-Host "⚠ User declined auto-fixing page ranges."
+            Write-Host "❌ User declined auto-fixing page ranges. **Execution will not proceed.**"
+            return  # **Hard stop if page ranges are not fixed**
         }
-    }
-
-    # If there are remaining validation errors, show an error window and stop execution
-    if ($InvalidPDFs.Count -gt 0 -or $DuplicateOutputNames.Count -gt 0) {
-        $ErrorMessage = ""
-        if ($InvalidPDFs.Count -gt 0) {
-            $ErrorMessage += "🚨 The following PDFs are missing or invalid:`n" + ($InvalidPDFs -join "`n") + "`n`n"
-        }
-        if ($DuplicateOutputNames.Count -gt 0) {
-            $ErrorMessage += "❌ The following output names are duplicated:`n" + ($DuplicateOutputNames -join "`n") + "`n`n"
-        }
-
-        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Validation Errors", "OK", "Error")
-        return  # Stop execution
     }
 
     # Ensure batch folder exists
