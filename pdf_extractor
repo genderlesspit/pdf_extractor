@@ -1108,22 +1108,22 @@ function Get-LevenshteinDistance {
     $Len1 = $String1.Length
     $Len2 = $String2.Length
 
-    # Create a 2D array (Levenshtein distance matrix)
+    # Explicitly initialize the 2D array with integer values
     $Matrix = New-Object 'int[,]' ($Len1 + 1), ($Len2 + 1)
 
     # Initialize the matrix
-    for ($i = 0; $i -le $Len1; $i++) { $Matrix[$i, 0] = $i }
-    for ($j = 0; $j -le $Len2; $j++) { $Matrix[0, $j] = $j }
+    for ($i = 0; $i -le $Len1; $i++) { [int]$Matrix[$i, 0] = $i }
+    for ($j = 0; $j -le $Len2; $j++) { [int]$Matrix[0, $j] = $j }
 
     # Compute the Levenshtein distance
     for ($i = 1; $i -le $Len1; $i++) {
         for ($j = 1; $j -le $Len2; $j++) {
             $Cost = if ($String1[$i - 1] -eq $String2[$j - 1]) { 0 } else { 1 }
 
-            # Corrected PowerShell array indexing
-            $Delete = $Matrix[$i - 1, $j] + 1  # Deletion
-            $Insert = $Matrix[$i, $j - 1] + 1  # Insertion
-            $Substitute = $Matrix[$i - 1, $j - 1] + $Cost  # Substitution
+            # Retrieve the integer values explicitly
+            $Delete = [int]$Matrix[$i - 1, $j] + 1  # Deletion
+            $Insert = [int]$Matrix[$i, $j - 1] + 1  # Insertion
+            $Substitute = [int]$Matrix[$i - 1, $j - 1] + $Cost  # Substitution
 
             # Assign the minimum of the three operations
             $Matrix[$i, $j] = [Math]::Min([Math]::Min($Delete, $Insert), $Substitute)
