@@ -790,16 +790,15 @@ $BtnMassMasterPDFs.Add_Click({
 
     # Click Event: Process Input
     $OkButton.Add_Click({
-        $Entries = $TextBox.Text -split "`r`n"  # Split input by new lines
+        $Entries = $TextBox.Text -split "`r`n"  # Corrected line splitting
 
         foreach ($MasterPDFValue in $Entries) {
             $MasterPDFValue = $MasterPDFValue.Trim()
 
             if (![string]::IsNullOrWhiteSpace($MasterPDFValue)) {
+                # Ensure the row count before assigning values
                 $NewRow = $DataTable.NewRow()
                 $NewRow["Master PDF"] = $MasterPDFValue
-                $NewRow["Output Name"] = ""  # Placeholder for other fields
-                $NewRow["Page Range"] = ""
                 $DataTable.Rows.Add($NewRow)
             }
         }
@@ -811,7 +810,6 @@ $BtnMassMasterPDFs.Add_Click({
     $InputForm.Controls.Add($OkButton)
     $InputForm.ShowDialog()
 })
-
 
 # === Mass Input for Page Ranges ===
 $BtnPageRange.Add_Click({
@@ -835,17 +833,17 @@ $BtnPageRange.Add_Click({
 
     # Process Input on OK Click
     $OkButton.Add_Click({
-        $Entries = $TextBox.Text -split "`r`n"  # Corrected line splitting
+        $Entries = $TextBox.Text -split "`r`n"
 
         for ($i = 0; $i -lt $Entries.Length; $i++) {
             $PageRangeValue = $Entries[$i].Trim()
 
             if (![string]::IsNullOrWhiteSpace($PageRangeValue)) {
-                # Ensure enough rows exist in the DataTable
+                # Ensure enough rows exist before assigning values
                 while ($i -ge $DataTable.Rows.Count) {
                     $DataTable.Rows.Add("", "", "")  # Ensure all columns exist
                 }
-                $DataTable.Rows[$i]["Page Range"] = $PageRangeValue  # Assign value
+                $DataTable.Rows[$i]["Page Range"] = $PageRangeValue
             }
         }
         $InputForm.Close()
@@ -877,17 +875,17 @@ $BtnMassInput.Add_Click({
 
     # Process Input on OK Click
     $OkButton.Add_Click({
-        $Entries = $TextBox.Text -split "`r`n"  # Corrected line splitting
+        $Entries = $TextBox.Text -split "`r`n"
 
         for ($i = 0; $i -lt $Entries.Length; $i++) {
             $OutputNameValue = $Entries[$i].Trim()
 
             if (![string]::IsNullOrWhiteSpace($OutputNameValue)) {
-                # Ensure enough rows exist in the DataTable
+                # Ensure enough rows exist before assigning values
                 while ($i -ge $DataTable.Rows.Count) {
                     $DataTable.Rows.Add("", "", "")  # Ensure all columns exist
                 }
-                $DataTable.Rows[$i]["Output Name"] = $OutputNameValue  # Assign value
+                $DataTable.Rows[$i]["Output Name"] = $OutputNameValue
             }
         }
         $InputForm.Close()
@@ -896,7 +894,6 @@ $BtnMassInput.Add_Click({
     $InputForm.Controls.Add($OkButton)
     $InputForm.ShowDialog()
 })
-
 
 # === Initialize GUI and Populate PDF List Before Displaying ===
 Refresh-PDFList  # Call function to ensure the PDF list is preloaded
