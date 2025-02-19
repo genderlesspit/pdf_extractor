@@ -285,8 +285,7 @@ function Retry-FailedExports {
 
     Write-Host "🔄 Retrying failed exports..."
     $RetryCount = @{ }
-    $StillFailed = @()
-    $Delay = 2  # Start with 2-second delay between retries
+    $BaseDelay = 2  # Start with 2-second delay between retries
 
     foreach ($FailedExport in $FailedExports) {
         if ($FailedExport.OutputName -and -not $RetryCount.ContainsKey($FailedExport.OutputName)) {
@@ -294,11 +293,12 @@ function Retry-FailedExports {
         }
     }
 
+    # Ensure overlay is displayed
     if ($Global:OverlayForm -eq $null) { Show-Overlay -ProgressMax 5 }
 
     while ($FailedExports.Count -gt 0) {
         $NewFailedExports = @()
-        
+
         foreach ($Export in $FailedExports) {
             if ([string]::IsNullOrWhiteSpace($Export.OutputName) -or [string]::IsNullOrWhiteSpace($Export.PageRanges)) {
                 Log-Message "⚠ Skipping empty row."
@@ -310,8 +310,14 @@ function Retry-FailedExports {
                 continue
             }
 
+            # **Ensure Edge & print processes are fully closed before retrying**
+            Close-AllEdgeProcesses
+            Clear-PrintQueue
+            Start-Sleep -Seconds 2  # Allow time for processes to terminate
+
             $OutputFilePath = Join-Path $Export.SaveDir "$($Export.OutputName).pdf"
 
+            # **If the file already exists, remove from failed queue and continue**
             if (Test-Path $OutputFilePath) {
                 Log-Message "✅ Skipping re-export: File already exists: $OutputFilePath"
                 continue
@@ -325,10 +331,19 @@ function Retry-FailedExports {
 
             if ($RetryCount[$Export.OutputName] -lt $MaxRetries) {
                 Log-Message "🔄 Retrying export for: $($Export.OutputName)... Attempt: $($RetryCount[$Export.OutputName] + 1)"
+
+                # **Detect & auto-correct errors in variables before retrying**
+                $Export.PageRanges = Fix-PageRange $Export.PageRanges
+                $Export.PDFPath = Find-CloseMatchPDF -MissingPDF $Export.PDFPath
+
+                # **Retry print operation**
                 $Result = Print-PDF -PDFPath $Export.PDFPath -PageRanges $Export.PageRanges -SaveDir $Export.SaveDir -OutputName $Export.OutputName
                 
-                Start-Sleep -Seconds $Delay  # Wait before next retry
+                # **Implement exponential backoff delay**
+                $WaitTime = $BaseDelay * ($RetryCount[$Export.OutputName] + 1)
+                Start-Sleep -Seconds $WaitTime  
 
+                # **Check if retry was successful**
                 if (($Result -eq $null) -and (Test-Path $OutputFilePath)) {
                     Log-Message "✅ Successfully retried export: $($Export.OutputName)"
                 } else {
@@ -338,19 +353,19 @@ function Retry-FailedExports {
                 }
             } else {
                 Log-Message "❌ Max retries reached for: $($Export.OutputName). Adding to final failed list." -Type "ERROR"
-                $StillFailed += $Export
+                $NewFailedExports += $Export
             }
         }
 
+        # **Only keep truly failed exports in the retry queue**
         $FailedExports = $NewFailedExports
-        $Delay += 2  # Increase delay between retries
     }
 
     Close-Overlay
 
-    if ($StillFailed.Count -gt 0) {
+    if ($FailedExports.Count -gt 0) {
         Log-Message "⚠ The following files failed after $MaxRetries retries:"
-        foreach ($Failed in $StillFailed) {
+        foreach ($Failed in $FailedExports) {
             Log-Message "   - $($Failed.OutputName) ($($Failed.PDFPath))" -Type "ERROR"
         }
     } else {
@@ -358,6 +373,15 @@ function Retry-FailedExports {
     }
 }
 
+function Close-AllEdgeProcesses {
+    Write-Host "🛑 Closing all Edge processes..."
+    Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+function Clear-PrintQueue {
+    Write-Host "🖨 Clearing stuck print jobs..."
+    Get-Printer | ForEach-Object { Remove-Printer -Name $_.Name -ErrorAction SilentlyContinue }
+}
 
 function Print-PDF {
     param (
