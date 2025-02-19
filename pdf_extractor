@@ -1,11 +1,35 @@
-### === Load Required Assemblies ===
-if (-not ("System.Windows.Forms" -as [Type])) { 
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+#=== SECTION 1: ASSEMBLIES ================================================
+
+# === Load Required Assemblies ===
+if (-not ("System.Windows.Forms.Form" -as [Type])) { 
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+    }
+    catch {
+        $ErrorMessage = "❌ ERROR: Failed to load System.Windows.Forms. GUI elements may not work."
+        Write-Host $ErrorMessage -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Critical Error", "OK", "Error")
+    }
 }
 
-if (-not ("System.Drawing.Color" -as [Type])) { 
-    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+if (-not ("System.Drawing.Graphics" -as [Type])) { 
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    }
+    catch {
+        $ErrorMessage = "❌ ERROR: Failed to load System.Drawing. Some graphical features may not work."
+        Write-Host $ErrorMessage -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Critical Error", "OK", "Error")
+    }
 }
+
+# === PowerShell Version Check ===
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    Write-Host "⚠ WARNING: This script is designed for Windows PowerShell 5.1. Some features may not work in PowerShell Core 7.x or later." -ForegroundColor Yellow
+    [System.Windows.Forms.MessageBox]::Show("This script is designed for Windows PowerShell 5.1. Some features may not work in PowerShell Core 7.x or later.", "Compatibility Warning", "OK", "Warning")
+}
+
+#=== SECTION 2: DIRECTORIES ===============================================
 
 ### === Define Directories Properly ===
 $FallbackDir = "C:\PDF_Extractor"
@@ -66,6 +90,8 @@ if (Test-Path $ConfigPath) {
     }
 }
 
+# === SECTION 3: BATCH INITIALIZATION =====================================================================
+
 # === Introduce Global Batch Variable ===
 $Global:LastBatchFolder = $null  # Stores the most recent batch folder
 
@@ -94,6 +120,7 @@ function Initialize-BatchFolder {
 # Initialize batch folder at script startup
 $Global:LastBatchFolder = Initialize-BatchFolder
 
+# === SECTION 4: LOGGING SYSTEM ==========================================================================
 # === Logging System Improvements ===
 function Start-Logging {
     param ([string]$BatchTimestamp)
@@ -168,6 +195,8 @@ function Log-Message {
         Write-Host $FormattedMessage
     }
 }
+
+# === SECTION 5: OVERLAY SYSTEM ==================================================================================
 
 # === Overlay System Improvements ===
 function Show-Overlay {
