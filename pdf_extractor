@@ -918,7 +918,7 @@ $BtnMassInput.Add_Click({
 # === Initialize GUI and Populate PDF List Before Displaying ===
 Refresh-PDFList  # Call function to ensure the PDF list is preloaded
 
-# ==== START BUTTON (With Full Validation & Auto-Fix) ====
+# ==== START BUTTON (With Full Validation, Auto-Fix, Retry, & Transport) ====
 $BtnStart.Add_Click({
     $FailedExports = @()  # Reset failed export tracking
     $InvalidPDFs = @()  # Store invalid PDFs
@@ -927,6 +927,8 @@ $BtnStart.Add_Click({
     $OutputNameSet = @{}  # Track seen output names to find duplicates
     $ValidRows = 0  # Track number of valid rows
     $FixedPageRanges = @{}  # Store auto-fixed page ranges
+    $PreviouslyExportedFiles = @{}  # Track previously exported files to transport
+    $SkippedExports = @()  # Store transports to be skipped in printing
 
     # Generate batch timestamp
     $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -935,7 +937,33 @@ $BtnStart.Add_Click({
     # Regular expression for **valid** page ranges (e.g., `9-12,57-60`)
     $PageRangePattern = "^\d+(-\d+)?(,\d+(-\d+)?)*$"
 
-    # Validate PDFs, Page Ranges, and Output Names before starting
+    # === Check for Previous Exports & Transport ===
+    $PreviousExports = Get-ChildItem -Path $ExportsDir -Directory | Where-Object { $_.Name -ne $BatchTimestamp }
+    foreach ($ExportFolder in $PreviousExports) {
+        $ExportedFiles = Get-ChildItem -Path $ExportFolder.FullName -Filter "*.pdf"
+        foreach ($File in $ExportedFiles) {
+            $PreviouslyExportedFiles[$File.Name] = $File.FullName
+        }
+    }
+
+    if ($PreviouslyExportedFiles.Count -gt 0) {
+        $TransportPrompt = [System.Windows.Forms.MessageBox]::Show(
+            "Some files from previous exports match the ones you're trying to create.`n`nWould you like to transport them into the new folder instead of re-exporting?",
+            "Transport Previously Exported Files",
+            "YesNo", "Question"
+        )
+
+        if ($TransportPrompt -eq "Yes") {
+            foreach ($FileName in $PreviouslyExportedFiles.Keys) {
+                $NewPath = Join-Path $BatchFolder $FileName
+                Copy-Item -Path $PreviouslyExportedFiles[$FileName] -Destination $NewPath -Force
+                $SkippedExports += $FileName  # Skip this file in printing
+                Write-Host "✅ Transported: $FileName → $NewPath"
+            }
+        }
+    }
+
+    # === Validate PDFs, Page Ranges, and Output Names before starting ===
     $TotalRows = $DataGridView.Rows.Count - 1
     for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
         $Row = $DataGridView.Rows[$RowIndex]
@@ -948,6 +976,12 @@ $BtnStart.Add_Click({
         if ([string]::IsNullOrWhiteSpace($PDFFileName) -and
             [string]::IsNullOrWhiteSpace($OutputName) -and
             [string]::IsNullOrWhiteSpace($PageRanges)) {
+            continue
+        }
+
+        # Skip files that were transported
+        if ($SkippedExports -contains "$OutputName.pdf") {
+            Write-Host "⚠ Skipping transported file: $OutputName.pdf"
             continue
         }
 
@@ -975,28 +1009,6 @@ $BtnStart.Add_Click({
             $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
             $FixedPageRanges[$RowIndex] = Format-PageRange $PageRanges
         }
-
-        # Check if Page Range format is valid after fixing spaces
-        if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -notmatch $PageRangePattern) {
-            Write-Host "❌ Incorrectly formatted Page Range detected: $PageRanges"
-            $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
-            $FixedPageRanges[$RowIndex] = Format-PageRange $PageRanges
-        }
-
-        # Check for duplicate Output Names
-        if (![string]::IsNullOrWhiteSpace($OutputName)) {
-            if ($OutputNameSet.ContainsKey($OutputName)) {
-                $DuplicateOutputNames += "Row $($RowIndex + 1): $OutputName"
-            } else {
-                $OutputNameSet[$OutputName] = $true
-            }
-        }
-    }
-
-    # Prevent start if there are no valid rows
-    if ($ValidRows -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("🚨 No valid rows found. Please enter at least one row before starting.", "Validation Error", "OK", "Error")
-        return  # Stop execution
     }
 
     # If invalid page ranges exist, notify user **before auto-fixing**
@@ -1014,7 +1026,7 @@ $BtnStart.Add_Click({
         Write-Host "✅ Auto-fixed all page ranges."
     }
 
-    # Ensure batch folder exists
+    # === Ensure batch folder exists ===
     if (!(Test-Path $BatchFolder)) {
         try {
             New-Item -ItemType Directory -Path $BatchFolder | Out-Null
@@ -1026,11 +1038,11 @@ $BtnStart.Add_Click({
         }
     }
 
-    # Start logging
+    # === Start logging ===
     Start-Logging -BatchTimestamp $BatchTimestamp
     Show-Overlay -ProgressMax 5 -BatchTimestamp $BatchTimestamp
 
-    # Process each row in the DataGridView
+    # === Process each row in the DataGridView ===
     for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
         $Row = $DataGridView.Rows[$RowIndex]
         $PDFFileName = $Row.Cells["Master PDF"].Value
@@ -1047,6 +1059,11 @@ $BtnStart.Add_Click({
             continue
         }
 
+        # Skip transported files
+        if ($SkippedExports -contains "$OutputName.pdf") {
+            continue
+        }
+
         # Attempt to print the PDF
         $Result = Print-PDF -PDFPath $PDFPath -PageRanges $PageRanges -SaveDir $SaveDir -OutputName $OutputName
         if ($Result -ne $null) {
@@ -1056,6 +1073,7 @@ $BtnStart.Add_Click({
 
     # Retry failed exports if necessary
     if ($FailedExports.Count -gt 0) {
+        Close-AllEdgeAndPrintProcesses  # Close all Edge & Print operations before retry
         Write-Host "🔄 Retrying failed exports..."
         Retry-FailedExports -FailedExports $FailedExports
     }
@@ -1063,16 +1081,60 @@ $BtnStart.Add_Click({
     # Close overlay once processing is done
     Close-Overlay
 
-    # Store batch folder globally for later file movement
-    $Global:LastBatchFolder = $BatchFolder
-    Write-Host "✅ Batch completed: $BatchFolder"
-
     # Move exported files to user-selected destination
     Move-ExportedFiles -BatchFolder $BatchFolder
 
     # Stop logging
     Stop-Logging
 })
+
+function Check-PreviouslyExportedFiles {
+    param (
+        [string]$BatchFolder,     # The new export folder
+        [array]$PlannedExports    # The list of files that will be exported in this batch
+    )
+
+    $PreviouslyExported = @{}  # Store matches in previous export folders
+    $AllExportFolders = Get-ChildItem -Path $ExportsDir -Directory | Select-Object -ExpandProperty FullName
+
+    # Search for previously exported files in all past batch folders
+    foreach ($ExportFolder in $AllExportFolders) {
+        if ($ExportFolder -eq $BatchFolder) { continue }  # Skip current batch folder
+
+        $ExportedFiles = Get-ChildItem -Path $ExportFolder -Filter "*.pdf" | Select-Object -ExpandProperty Name
+
+        foreach ($PlannedFile in $PlannedExports) {
+            if ($ExportedFiles -contains $PlannedFile) {
+                $PreviouslyExported[$PlannedFile] = $ExportFolder  # Store match
+            }
+        }
+    }
+
+    # If previously exported files are found, prompt the user
+    if ($PreviouslyExported.Count -gt 0) {
+        $Message = "The following files have already been exported in previous batches:`n`n"
+        foreach ($File in $PreviouslyExported.Keys) {
+            $Message += "- $File (Previously in: $($PreviouslyExported[$File]))`n"
+        }
+        $Message += "`nWould you like to **move these files** into the new batch folder ($BatchFolder)?"
+
+        $UserChoice = [System.Windows.Forms.MessageBox]::Show($Message, "Move Previously Exported Files?", "YesNo", "Question")
+
+        if ($UserChoice -eq "Yes") {
+            foreach ($File in $PreviouslyExported.Keys) {
+                $OldPath = Join-Path $PreviouslyExported[$File] $File
+                $NewPath = Join-Path $BatchFolder $File
+
+                try {
+                    Move-Item -Path $OldPath -Destination $NewPath -Force -ErrorAction Stop
+                    Write-Host "✅ Moved: $File from $($PreviouslyExported[$File]) → $BatchFolder"
+                } catch {
+                    Write-Host "❌ Error moving $File: $_"
+                }
+            }
+        }
+    }
+}
 
 function Format-PageRange {
     param ([string]$PageRange)
