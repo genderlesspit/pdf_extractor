@@ -1050,6 +1050,20 @@ $BtnStart.Add_Click({
     Stop-Logging
 })
 
+function Format-PageRange {
+    param ([string]$PageRange)
+
+    # Remove ALL spaces
+    $PageRange = $PageRange -replace '\s', ''
+
+    # Ensure valid formatting (e.g., "3-5,6-9,11,15-17")
+    if ($PageRange -match "^\d+(-\d+)?(,\d+(-\d+)?)*$") {
+        return $PageRange  # Return fixed range
+    } else {
+        return $null  # Invalid format
+    }
+}
+
 function Find-CloseMatchPDF {
     param (
         [string]$MissingPDF
