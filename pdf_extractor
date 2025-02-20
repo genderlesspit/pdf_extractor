@@ -944,8 +944,6 @@ function Validate-Inputs {
     }
 }
 
-# === SECTION 7: VALIDATION SYSTEM === 
-
 function Validate-PDFExists {
     param ([string]$PDFPath, [string]$PDFFileName, [int]$RowIndex)
 
@@ -971,12 +969,45 @@ function Validate-PageRangeWithinPDF {
 
     if (![string]::IsNullOrWhiteSpace($PageRanges) -and (Test-Path $PDFPath)) {
         $ValidPageNumbers = Get-PDFPageCount -PDFPath $PDFPath
-        if (!(Validate-PageRange -PageRange $PageRanges -TotalPages $ValidPageNumbers)) {
-            Write-Host "❌ Page range out of bounds in PDF (Row ${RowIndex}): ${PageRanges}"
-            return "Row ${RowIndex}: ${PageRanges}"
+        $InvalidPages = @()
+
+        # Split the input page ranges into an array
+        $PageGroups = $PageRanges -split ","
+
+        foreach ($Range in $PageGroups) {
+            if ($Range -match "^\d+-\d+$") {  # Range format (e.g., 3-5)
+                $Start, $End = $Range -split "-"
+                for ($i = [int]$Start; $i -le [int]$End; $i++) {
+                    if ($i -lt 1 -or $i -gt $ValidPageNumbers) {  # Page is out of bounds
+                        $InvalidPages += $i
+                    }
+                }
+            } elseif ($Range -match "^\d+$") {  # Single page (e.g., 7)
+                if ([int]$Range -lt 1 -or [int]$Range -gt $ValidPageNumbers) {
+                    $InvalidPages += [int]$Range
+                }
+            }
+        }
+
+        # If invalid pages exist, return error message
+        if ($InvalidPages.Count -gt 0) {
+            $ErrorMessage = "🚨 Invalid page numbers detected!`n" +
+                            "📄 PDF: ${PDFPath} (Total Pages: ${ValidPageNumbers})`n" +
+                            "❌ Out-of-Range Pages in Row ${RowIndex}: " + ($InvalidPages -join ", ")
+
+            [System.Windows.Forms.MessageBox]::Show(
+                $ErrorMessage,
+                "Page Range Error",
+                "OK",
+                "Error"
+            )
+
+            Write-Host $ErrorMessage
+            return $false
         }
     }
-    return $null
+
+    return $true
 }
 
 function Validate-DuplicateOutputNames {
@@ -1529,13 +1560,16 @@ $BtnStart.Add_Click({
         $PDFFileName = $Row.Cells["Master PDF"].Value
         $OutputName = $Row.Cells["Output Name"].Value
         $PageRanges = $Row.Cells["Page Range"].Value
+        $PDFPath = Join-Path $MasterPDFDir $PDFFileName
 
+        # Skip empty rows
         if ([string]::IsNullOrWhiteSpace($PDFFileName) -and 
             [string]::IsNullOrWhiteSpace($OutputName) -and 
             [string]::IsNullOrWhiteSpace($PageRanges)) {
             continue
         }
 
+        # Skip files that were already transported
         if ($SkippedExports -contains "$OutputName.pdf") {
             Write-Host "⚠ Skipping transported file: $OutputName.pdf"
             continue
@@ -1544,52 +1578,14 @@ $BtnStart.Add_Click({
         $ValidRows++
 
         # Perform validation checks
-        $ValidPDF = Validate-PDFExists -PDFFileName $PDFFileName -RowIndex $RowIndex
-        $ValidPageRange = Validate-PageRangeFormat -PageRanges $PageRanges -RowIndex $RowIndex
-        $ValidOutputName = Validate-DuplicateOutputNames -OutputName $OutputName -RowIndex $RowIndex -OutputNameSet $OutputNameSet
-
-        if ($ValidPDF -or $ValidPageRange -or $ValidOutputName) {
+        if (-not (Validate-PDFExists -PDFFileName $PDFFileName -RowIndex $RowIndex) -or
+            -not (Validate-DuplicateOutputNames -OutputName $OutputName -RowIndex $RowIndex -OutputNameSet $OutputNameSet) -or
+            -not (Validate-PageRangeWithinPDF -PDFPath $PDFPath -PageRanges $PageRanges -RowIndex $RowIndex)) {
+            
             [System.Windows.Forms.MessageBox]::Show(
                 "Validation errors detected. Please fix the errors and restart.",
                 "Validation Error", "OK", "Error"
             )
-            return
-        }
-
-        if (-not (Validate-PageRangeWithinPDF -PDFPath (Join-Path $MasterPDFDir $PDFFileName) -PageRanges $PageRanges -RowIndex $RowIndex)) {
-            # Get the total number of pages in the PDF
-            $TotalPages = Get-PDFPageCount -PDFPath (Join-Path $MasterPDFDir $PDFFileName)
-            
-            # Extract the invalid page ranges
-            $InvalidPages = @()
-            $PageGroups = $PageRanges -split ","
-        
-            foreach ($Range in $PageGroups) {
-                if ($Range -match "^\d+-\d+$") {  # Range format (e.g., 5-10)
-                    $Start, $End = $Range -split "-"
-                    if ([int]$Start -gt $TotalPages -or [int]$End -gt $TotalPages) {
-                        $InvalidPages += $Range
-                    }
-                } elseif ($Range -match "^\d+$") {  # Single page (e.g., 15)
-                    if ([int]$Range -gt $TotalPages) {
-                        $InvalidPages += $Range
-                    }
-                }
-            }
-        
-            # Generate an error message listing invalid pages
-            $ErrorMessage = "🚨 Page range exceeds total pages in PDF.`n" +
-                            "📄 PDF: ${PDFFileName} (Total Pages: ${TotalPages})`n" +
-                            "❌ Invalid Page(s) in Row ${RowIndex}: " + ($InvalidPages -join ", ")
-        
-            [System.Windows.Forms.MessageBox]::Show(
-                $ErrorMessage,
-                "Page Range Error",
-                "OK",
-                "Error"
-            )
-        
-            Write-Host $ErrorMessage
             return
         }
     }
@@ -1651,4 +1647,5 @@ while ($Form.Visible) {
     Start-Sleep -Milliseconds 100
     [System.Windows.Forms.Application]::DoEvents()
 }
+
 
