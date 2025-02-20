@@ -1,45 +1,55 @@
-import os
-import shutil
-import tkinter as tk
-from tkinter import filedialog
+# Ensure System.Windows.Forms is loaded
+if (-not ("System.Windows.Forms.FolderBrowserDialog" -as [Type])) { Add-Type -AssemblyName System.Windows.Forms }
 
-# Define Paths
-base_dir = os.path.expanduser("~/PDF_Extractor")
-exports_dir = os.path.join(base_dir, "Exports")
+# Define paths
+$BaseDir = "$env:USERPROFILE\PDF_Extractor"
+$ExportsDir = "$BaseDir\Exports"
 
-def export_pdfs():
-    """Prompts user to select a folder and moves extracted PDFs."""
-    if not os.path.exists(exports_dir) or not os.listdir(exports_dir):
-        print("⚠ No extracted PDFs found. Export skipped.")
-        return
+# Function to prompt user for export folder
+function Get-ExportFolder {
+    $FolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $FolderDialog.Description = "Select a folder to export extracted PDFs"
 
-    # Open folder selection dialog
-    root = tk.Tk()
-    root.withdraw()  # Hide the main Tkinter window
-    destination_folder = filedialog.askdirectory(title="Select Destination Folder for Export")
+    if ($FolderDialog.ShowDialog() -eq "OK") {
+        return $FolderDialog.SelectedPath
+    } else {
+        Write-Host "❌ No folder selected. Export canceled."
+        exit 1
+    }
+}
 
-    if not destination_folder:
-        print("❌ Export canceled by user.")
-        return
+# Function to move extracted PDFs
+function Export-Files {
+    if (!(Test-Path $ExportsDir)) {
+        Write-Host "❌ Exports directory does not exist: $ExportsDir"
+        exit 1
+    }
 
-    print(f"📂 Exporting files to: {destination_folder}")
+    $ExportFolder = Get-ExportFolder
+    if (-not $ExportFolder) {
+        exit 1
+    }
 
-    for file_name in os.listdir(exports_dir):
-        src_path = os.path.join(exports_dir, file_name)
-        dest_path = os.path.join(destination_folder, file_name)
+    Write-Host "📂 Moving extracted PDFs to: $ExportFolder"
 
-        if os.path.exists(dest_path):
-            base, ext = os.path.splitext(file_name)
-            dest_path = os.path.join(destination_folder, f"{base}_Copy{ext}")
-            print(f"⚠ File {file_name} already exists. Renaming to {os.path.basename(dest_path)}")
+    $PDFs = Get-ChildItem -Path $ExportsDir -Filter "*.pdf"
+    if ($PDFs.Count -eq 0) {
+        Write-Host "⚠ No PDFs found in Exports directory."
+        exit 1
+    }
 
-        try:
-            shutil.move(src_path, dest_path)
-            print(f"✅ Moved: {file_name} → {dest_path}")
-        except Exception as e:
-            print(f"❌ Error moving {file_name}: {e}")
+    foreach ($PDF in $PDFs) {
+        $Destination = Join-Path $ExportFolder $PDF.Name
+        try {
+            Move-Item -Path $PDF.FullName -Destination $Destination -Force
+            Write-Host "✅ Moved: $($PDF.Name) → $ExportFolder"
+        } catch {
+            Write-Host "❌ Error moving $($PDF.Name): $($_.Exception.Message)"
+        }
+    }
 
-    print("🚀 Export completed successfully!")
+    Write-Host "🚀 Export process completed successfully!"
+}
 
-if __name__ == "__main__":
-    export_pdfs()
+# Run export function
+Export-Files
