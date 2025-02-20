@@ -945,13 +945,23 @@ function Validate-Inputs {
 }
 
 function Validate-PDFExists {
-    param ([string]$PDFPath, [string]$PDFFileName, [int]$RowIndex)
+    param ([string]$PDFFileName, [int]$RowIndex)
 
-    if (![string]::IsNullOrWhiteSpace($PDFFileName) -and !(Test-Path $PDFPath)) {
-        Write-Host "❌ PDF not found: $PDFFileName (Row: ${RowIndex})"
-        return "Row ${RowIndex}: ${PDFFileName}"
+    # Ensure the filename is not empty
+    if ([string]::IsNullOrWhiteSpace($PDFFileName)) {
+        Write-Host "❌ Missing PDF file name (Row ${RowIndex})"
+        return $false
     }
-    return $null
+
+    $PDFPath = Join-Path $MasterPDFDir $PDFFileName
+
+    # Ensure the constructed path is valid before using Test-Path
+    if (![string]::IsNullOrWhiteSpace($PDFPath) -and !(Test-Path $PDFPath)) {
+        Write-Host "❌ PDF not found: ${PDFFileName} (Row ${RowIndex})"
+        return $false
+    }
+
+    return $true
 }
 
 function Validate-PageRangeFormat {
