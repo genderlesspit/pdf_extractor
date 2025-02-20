@@ -947,27 +947,135 @@ $BtnMassInput.Add_Click({
 # === Initialize GUI and Populate PDF List Before Displaying ===
 Refresh-PDFList  # Call function to ensure the PDF list is preloaded
 
-# ==== START BUTTON (With Full Validation, Auto-Fix, Retry, & Transport) ====
-$BtnStart.Add_Click({
-    $FailedExports = @()  # Reset failed export tracking
-    $InvalidPDFs = @()  # Store invalid PDFs
-    $InvalidPageRanges = @()  # Store invalid page range entries
-    $DuplicateOutputNames = @()  # Store duplicate output names
-    $OutputNameSet = @{}  # Track seen output names to find duplicates
-    $ValidRows = 0  # Track number of valid rows
-    $FixedPageRanges = @{}  # Store auto-fixed page ranges
-    $PreviouslyExportedFiles = @{}  # Track previously exported files to transport
-    $SkippedExports = @()  # Store transports to be skipped in printing
+function Validate-Inputs {
+    $Global:ValidRows = 0
+    $InvalidPDFs = @()
+    $InvalidPageRanges = @()
+    $DuplicateOutputNames = @()
+    $OutputNameSet = @{}
 
-    # Generate batch timestamp
+    $TotalRows = $DataGridView.Rows.Count - 1
+    for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
+        $Row = $DataGridView.Rows[$RowIndex]
+        $PDFFileName = $Row.Cells["Master PDF"].Value
+        $OutputName = $Row.Cells["Output Name"].Value
+        $PageRanges = $Row.Cells["Page Range"].Value
+        $PDFPath = Join-Path $MasterPDFDir $PDFFileName
+
+        # Skip empty or transported rows
+        if ([string]::IsNullOrWhiteSpace($PDFFileName) -and [string]::IsNullOrWhiteSpace($OutputName) -and [string]::IsNullOrWhiteSpace($PageRanges)) {
+            continue
+        }
+        if ($Global:SkippedExports -contains "$OutputName.pdf") {
+            Write-Host "⚠ Skipping transported file: $OutputName.pdf"
+            continue
+        }
+
+        $Global:ValidRows++
+
+        # Run each validation function
+        $PDFError = Validate-PDFExists -PDFPath $PDFPath -PDFFileName $PDFFileName -RowIndex $RowIndex
+        if ($PDFError) { $InvalidPDFs += $PDFError }
+
+        $PageRangeFormatError = Validate-PageRangeFormat -PageRanges $PageRanges -RowIndex $RowIndex
+        if ($PageRangeFormatError) { $InvalidPageRanges += $PageRangeFormatError }
+
+        $PageRangePDFError = Validate-PageRangeWithinPDF -PageRanges $PageRanges -PDFPath $PDFPath -RowIndex $RowIndex
+        if ($PageRangePDFError) { $InvalidPageRanges += $PageRangePDFError }
+
+        $DuplicateOutputError = Validate-DuplicateOutputNames -OutputName $OutputName -RowIndex $RowIndex -OutputNameSet $OutputNameSet
+        if ($DuplicateOutputError) { $DuplicateOutputNames += $DuplicateOutputError }
+    }
+
+    # If errors exist, notify user and stop execution
+    if ($InvalidPDFs.Count -gt 0 -or $InvalidPageRanges.Count -gt 0 -or $DuplicateOutputNames.Count -gt 0) {
+        $ErrorMessage = "🚨 Validation errors detected:`n`n"
+        if ($InvalidPDFs.Count -gt 0) { $ErrorMessage += "❌ Missing PDFs:`n" + ($InvalidPDFs -join "`n") + "`n`n" }
+        if ($InvalidPageRanges.Count -gt 0) { $ErrorMessage += "⚠ Invalid Page Ranges:`n" + ($InvalidPageRanges -join "`n") + "`n`n" }
+        if ($DuplicateOutputNames.Count -gt 0) { $ErrorMessage += "❌ Duplicate Output Names:`n" + ($DuplicateOutputNames -join "`n") + "`n`n" }
+
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Validation Errors", "OK", "Error")
+        $Global:ValidRows = 0
+    }
+}
+
+function Validate-PDFExists {
+    param ([string]$PDFPath, [string]$PDFFileName, [int]$RowIndex)
+
+    if (![string]::IsNullOrWhiteSpace($PDFFileName) -and !(Test-Path $PDFPath)) {
+        Write-Host "❌ PDF not found: $PDFFileName (Row: $RowIndex)"
+        return "$PDFFileName (Row: $RowIndex)"
+    }
+    return $null
+}
+
+function Validate-PageRangeFormat {
+    param ([string]$PageRanges, [int]$RowIndex)
+
+    if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -match "\s") {
+        Write-Host "❌ Invalid Page Range detected (Row $RowIndex): $PageRanges"
+        return "Row $RowIndex: $PageRanges"
+    }
+    return $null
+}
+
+function Validate-PageRangeWithinPDF {
+    param ([string]$PageRanges, [string]$PDFPath, [int]$RowIndex)
+
+    if (![string]::IsNullOrWhiteSpace($PageRanges) -and (Test-Path $PDFPath)) {
+        $ValidPageNumbers = Get-PDFPageCount -PDFPath $PDFPath
+        if (!(Validate-PageRange -PageRange $PageRanges -TotalPages $ValidPageNumbers)) {
+            Write-Host "❌ Page range out of bounds in PDF (Row $RowIndex): $PageRanges"
+            return "Row $RowIndex: $PageRanges"
+        }
+    }
+    return $null
+}
+
+function Validate-DuplicateOutputNames {
+    param ([string]$OutputName, [int]$RowIndex, [hashtable]$OutputNameSet)
+
+    if (![string]::IsNullOrWhiteSpace($OutputName)) {
+        if ($OutputNameSet.ContainsKey($OutputName)) {
+            Write-Host "❌ Duplicate Output Name detected (Row $RowIndex): $OutputName"
+            return "Row $RowIndex: $OutputName"
+        } else {
+            $OutputNameSet[$OutputName] = $true
+        }
+    }
+    return $null
+}
+
+function Initialize-BatchFolder {
+    # Generate timestamped batch folder
     $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $BatchFolder = Join-Path $ExportsDir $BatchTimestamp
 
-    # Regular expression for **valid** page ranges (e.g., `9-12,57-60`)
-    $PageRangePattern = "^\d+(-\d+)?(,\d+(-\d+)?)*$"
+    # Ensure the batch folder exists
+    if (!(Test-Path $BatchFolder)) {
+        try {
+            New-Item -ItemType Directory -Path $BatchFolder -Force -ErrorAction Stop | Out-Null
+            Write-Host "📂 Created batch folder: $BatchFolder"
+        }
+        catch {
+            Write-Host "❌ Error creating batch folder: $_"
+            return $null  # Return null if creation fails
+        }
+    }
 
-    # === Check for Previous Exports & Transport ===
-    $PreviousExports = Get-ChildItem -Path $ExportsDir -Directory | Where-Object { $_.Name -ne $BatchTimestamp }
+    # Store batch folder globally
+    $Global:LastBatchFolder = $BatchFolder
+    return $BatchFolder
+}
+
+function Check-PreviousExports {
+    param ([string]$BatchFolder)
+
+    $PreviouslyExportedFiles = @{}
+    $SkippedExports = @()
+
+    # Get list of previous exports
+    $PreviousExports = Get-ChildItem -Path $ExportsDir -Directory | Where-Object { $_.Name -ne (Split-Path -Leaf $BatchFolder) }
     foreach ($ExportFolder in $PreviousExports) {
         $ExportedFiles = Get-ChildItem -Path $ExportFolder.FullName -Filter "*.pdf"
         foreach ($File in $ExportedFiles) {
@@ -975,6 +1083,7 @@ $BtnStart.Add_Click({
         }
     }
 
+    # If matching files exist, ask the user if they want to transport them
     if ($PreviouslyExportedFiles.Count -gt 0) {
         $TransportPrompt = [System.Windows.Forms.MessageBox]::Show(
             "Some files from previous exports match the ones you're trying to create.`n`nWould you like to transport them into the new folder instead of re-exporting?",
@@ -986,13 +1095,125 @@ $BtnStart.Add_Click({
             foreach ($FileName in $PreviouslyExportedFiles.Keys) {
                 $NewPath = Join-Path $BatchFolder $FileName
                 Copy-Item -Path $PreviouslyExportedFiles[$FileName] -Destination $NewPath -Force
-                $SkippedExports += $FileName  # Skip this file in printing
+                $SkippedExports += $FileName  # Mark as skipped
                 Write-Host "✅ Transported: $FileName → $NewPath"
             }
         }
     }
 
-    # === Validate PDFs, Page Ranges, and Output Names before starting ===
+    return $SkippedExports
+}
+
+function Start-ProcessLogging {
+    param ([string]$BatchTimestamp)
+
+    # Ensure Log Directory Exists
+    if (!(Test-Path $LogDir)) {
+        New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+        Write-Host "✔ Log directory created: $LogDir"
+    }
+
+    # Define batch log file name
+    $LogFileName = "log_$BatchTimestamp.txt"
+    $LogFilePath = Join-Path $LogDir $LogFileName
+    $Global:CurrentLogFile = $LogFilePath  # Store for global reference
+
+    # Remove old logs if more than 10 exist
+    $ExistingLogs = Get-ChildItem -Path $LogDir -Filter "log_*.txt" | Sort-Object LastWriteTime -Descending
+    if ($ExistingLogs.Count -gt 10) {
+        $LogsToDelete = $ExistingLogs | Select-Object -Skip 10
+        $LogsToDelete | ForEach-Object { Remove-Item $_.FullName -Force }
+        Write-Host "🗑 Old logs archived. Keeping only the last 10 logs."
+    }
+
+    # Start logging safely
+    try {
+        Start-Transcript -Path $LogFilePath -Append -ErrorAction Stop
+        Write-Host "📝 Logging started for batch: $BatchTimestamp"
+    }
+    catch {
+        Write-Host "⚠ Warning: Failed to start transcript logging. Logging will continue in console."
+    }
+}
+
+function Display-ProcessingOverlay {
+    param ([int]$ProgressMax, [string]$BatchTimestamp)
+
+    # Prevent duplicate overlays
+    if ($Global:OverlayForm -ne $null -and !$Global:OverlayForm.IsDisposed) {
+        Write-Host "⚠ Overlay already active. Skipping new overlay creation."
+        return
+    }
+
+    # Ensure previous overlay is fully closed
+    if ($Global:OverlayForm -ne $null) {
+        Close-Overlay
+        Start-Sleep -Milliseconds 500  # Shorter delay for smoother UI updates
+    }
+
+    # Create full-screen overlay
+    $Global:OverlayForm = New-Object System.Windows.Forms.Form
+    $Global:OverlayForm.WindowState = "Maximized"
+    $Global:OverlayForm.FormBorderStyle = "None"
+    $Global:OverlayForm.BackColor = [System.Drawing.Color]::FromArgb(245, 245, 245)
+    $Global:OverlayForm.TopMost = $true
+    $Global:OverlayForm.ShowInTaskbar = $false
+
+    # Progress Label
+    $Global:LogLabel = New-Object System.Windows.Forms.Label
+    $Global:LogLabel.ForeColor = "Black"
+    $Global:LogLabel.Font = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
+    $Global:LogLabel.AutoSize = $true
+    $Global:LogLabel.Text = "Processing Batch: $BatchTimestamp..."
+    $Global:LogLabel.Location = New-Object System.Drawing.Point(500, 200)
+    $Global:OverlayForm.Controls.Add($Global:LogLabel)
+
+    # Progress Bar
+    $Global:ProgressBar = New-Object System.Windows.Forms.ProgressBar
+    $Global:ProgressBar.Style = "Continuous"
+    $Global:ProgressBar.Maximum = $ProgressMax
+    $Global:ProgressBar.Location = New-Object System.Drawing.Point(300, 300)
+    $Global:ProgressBar.Size = New-Object System.Drawing.Size(600, 30)
+    $Global:OverlayForm.Controls.Add($Global:ProgressBar)
+
+    # Cancel Button
+    $Global:CancelButton = New-Object System.Windows.Forms.Button
+    $Global:CancelButton.Text = "Cancel"
+    $Global:CancelButton.Size = New-Object System.Drawing.Size(200, 50)
+    $Global:CancelButton.Location = New-Object System.Drawing.Point(500, 400)
+    $Global:CancelButton.BackColor = [System.Drawing.Color]::FromArgb(240, 80, 80)
+    $Global:CancelButton.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $Global:CancelButton.ForeColor = "White"
+
+    # Cancel Action
+    $Global:CancelButton.Add_Click({
+        $Global:CancelPrint = $true
+        Write-Host "❌ Process canceled by user."
+        Close-Overlay
+    })
+    $Global:OverlayForm.Controls.Add($Global:CancelButton)
+
+    # Show overlay
+    $Global:OverlayForm.Show()
+    Write-Host "🖥 Full-screen overlay displayed for batch: $BatchTimestamp."
+}
+
+function Validate-ExportData {
+    param (
+        [System.Windows.Forms.DataGridView]$DataGridView,
+        [array]$SkippedExports
+    )
+
+    $InvalidPDFs = @()
+    $InvalidPageRanges = @()
+    $DuplicateOutputNames = @()
+    $OutputNameSet = @{}
+    $ValidRows = 0
+    $FixedPageRanges = @{}
+
+    # Page range validation pattern
+    $PageRangePattern = "^\d+(-\d+)?(,\d+(-\d+)?)*$"
+
     $TotalRows = $DataGridView.Rows.Count - 1
     for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
         $Row = $DataGridView.Rows[$RowIndex]
@@ -1001,14 +1222,14 @@ $BtnStart.Add_Click({
         $PageRanges = $Row.Cells["Page Range"].Value
         $PDFPath = Join-Path $MasterPDFDir $PDFFileName
 
-        # Skip completely empty rows
+        # Skip empty rows
         if ([string]::IsNullOrWhiteSpace($PDFFileName) -and
             [string]::IsNullOrWhiteSpace($OutputName) -and
             [string]::IsNullOrWhiteSpace($PageRanges)) {
             continue
         }
 
-        # Skip files that were transported
+        # Skip transported files
         if ($SkippedExports -contains "$OutputName.pdf") {
             Write-Host "⚠ Skipping transported file: $OutputName.pdf"
             continue
@@ -1017,61 +1238,122 @@ $BtnStart.Add_Click({
         # Count valid rows
         $ValidRows++
 
-        # Check if PDF file exists; attempt correction if missing
+        # Check if PDF file exists
         if (![string]::IsNullOrWhiteSpace($PDFFileName) -and !(Test-Path $PDFPath)) {
             Write-Host "❌ PDF not found: $PDFFileName"
-
-            # Attempt to find a close match and rename
-            $CorrectedPath = Find-CloseMatchPDF -MissingPDF $PDFFileName
-
-            if ($CorrectedPath) {
-                Write-Host "✅ Using corrected file: $CorrectedPath"
-                $PDFPath = $CorrectedPath  # Update the path to the newly renamed file
-            } else {
-                $InvalidPDFs += "$PDFFileName (Row: $($RowIndex + 1))"
-            }
+            $InvalidPDFs += "$PDFFileName (Row: $($RowIndex + 1))"
         }
 
-        # **Detect spaces anywhere in Page Ranges**
+        # Detect spaces in Page Ranges
         if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -match "\s") {
             Write-Host "❌ Invalid Page Range detected (Row $RowIndex): $PageRanges"
             $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
             $FixedPageRanges[$RowIndex] = Format-PageRange $PageRanges
         }
+
+        # Check if page range is valid in the actual PDF
+        if (!(Test-PageRangeInPDF -PDFPath $PDFPath -PageRanges $PageRanges)) {
+            Write-Host "❌ Invalid page range in actual PDF (Row $RowIndex): $PageRanges"
+            $InvalidPageRanges += "Row $($RowIndex + 1): $PageRanges"
+        }
+
+        # Check for duplicate Output Names
+        if (![string]::IsNullOrWhiteSpace($OutputName)) {
+            if ($OutputNameSet.ContainsKey($OutputName)) {
+                $DuplicateOutputNames += "Row $($RowIndex + 1): $OutputName"
+            } else {
+                $OutputNameSet[$OutputName] = $true
+            }
+        }
     }
 
-    # If invalid page ranges exist, notify user **before auto-fixing**
+    return @{
+        "ValidRows" = $ValidRows
+        "InvalidPDFs" = $InvalidPDFs
+        "InvalidPageRanges" = $InvalidPageRanges
+        "DuplicateOutputNames" = $DuplicateOutputNames
+        "FixedPageRanges" = $FixedPageRanges
+    }
+}
+
+function Handle-ValidationErrors {
+    param (
+        [hashtable]$ValidationResults,
+        [System.Windows.Forms.DataGridView]$DataGridView
+    )
+
+    $ValidRows = $ValidationResults["ValidRows"]
+    $InvalidPDFs = $ValidationResults["InvalidPDFs"]
+    $InvalidPageRanges = $ValidationResults["InvalidPageRanges"]
+    $DuplicateOutputNames = $ValidationResults["DuplicateOutputNames"]
+    $FixedPageRanges = $ValidationResults["FixedPageRanges"]
+
+    # Prevent start if there are no valid rows
+    if ($ValidRows -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "🚨 No valid rows found. Please enter at least one row before starting.",
+            "Validation Error", "OK", "Error"
+        )
+        return $false  # Stop execution
+    }
+
+    # Compile error messages
+    $ErrorMessage = ""
+    if ($InvalidPDFs.Count -gt 0) {
+        $ErrorMessage += "🚨 The following PDFs are missing or invalid:`n" + ($InvalidPDFs -join "`n") + "`n`n"
+    }
     if ($InvalidPageRanges.Count -gt 0) {
-        $ErrorMessage = "⚠ Error detected in page ranges (spaces or incorrect format).`n`n"
-        $ErrorMessage += "🚀 Auto-fixing all page ranges now..."
-
-        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Auto-Fixing Page Ranges", "OK", "Warning")
-
-        # Perform auto-fix
-        foreach ($RowIndex in $FixedPageRanges.Keys) {
-            $Row = $DataGridView.Rows[$RowIndex]
-            $Row.Cells["Page Range"].Value = $FixedPageRanges[$RowIndex]
-        }
-        Write-Host "✅ Auto-fixed all page ranges."
+        $ErrorMessage += "⚠ The following rows have invalid page ranges:`n" + ($InvalidPageRanges -join "`n") + "`n`n"
+    }
+    if ($DuplicateOutputNames.Count -gt 0) {
+        $ErrorMessage += "❌ The following output names are duplicated:`n" + ($DuplicateOutputNames -join "`n") + "`n`n"
     }
 
-    # === Ensure batch folder exists ===
-    if (!(Test-Path $BatchFolder)) {
-        try {
-            New-Item -ItemType Directory -Path $BatchFolder | Out-Null
-            Write-Host "📂 Created new batch folder: $BatchFolder"
-        }
-        catch {
-            Write-Host "❌ Error creating batch folder: $_"
-            return
+    # If errors exist, prompt user
+    if ($ErrorMessage -ne "") {
+        [System.Windows.Forms.MessageBox]::Show(
+            $ErrorMessage, "Validation Errors", "OK", "Error"
+        )
+        return $false  # Stop execution
+    }
+
+    # Auto-fix page ranges if necessary
+    if ($FixedPageRanges.Count -gt 0) {
+        $PromptMessage = "Would you like to automatically fix the following page ranges?`n" +
+                         ($FixedPageRanges.Values -join "`n") + "`n`n" +
+                         "This will remove spaces and apply correct formatting."
+
+        $UserChoice = [System.Windows.Forms.MessageBox]::Show(
+            $PromptMessage, "Auto-Fix Page Ranges", "YesNo", "Question"
+        )
+
+        if ($UserChoice -eq "Yes") {
+            foreach ($RowIndex in $FixedPageRanges.Keys) {
+                $Row = $DataGridView.Rows[$RowIndex]
+                $Row.Cells["Page Range"].Value = $FixedPageRanges[$RowIndex]
+            }
+            Write-Host "✅ Auto-fixed page ranges."
+        } else {
+            Write-Host "❌ User declined auto-fixing page ranges. **Execution will not proceed.**"
+            return $false  # Stop execution if user doesn't allow fixes
         }
     }
 
-    # === Start logging ===
-    Start-Logging -BatchTimestamp $BatchTimestamp
-    Show-Overlay -ProgressMax 5 -BatchTimestamp $BatchTimestamp
+    return $true  # Proceed with execution
+}
 
-    # === Process each row in the DataGridView ===
+function Process-Exports {
+    param (
+        [System.Windows.Forms.DataGridView]$DataGridView,
+        [string]$BatchFolder,
+        [array]$SkippedExports,
+        [array]$FailedExports
+    )
+
+    # Initialize Progress Bar
+    Show-Overlay -ProgressMax 5 -BatchTimestamp (Get-Date -Format "yyyyMMdd_HHmmss")
+
+    $TotalRows = $DataGridView.Rows.Count - 1
     for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
         $Row = $DataGridView.Rows[$RowIndex]
         $PDFFileName = $Row.Cells["Master PDF"].Value
@@ -1079,8 +1361,9 @@ $BtnStart.Add_Click({
         $PageRanges = $Row.Cells["Page Range"].Value
         $PDFPath = Join-Path $MasterPDFDir $PDFFileName
         $SaveDir = $BatchFolder
+        $OutputFilePath = Join-Path $BatchFolder "$OutputName.pdf"
 
-        # Skip rows with missing required data
+        # Skip empty or incomplete rows
         if ([string]::IsNullOrWhiteSpace($PDFFileName) -or
             [string]::IsNullOrWhiteSpace($OutputName) -or
             [string]::IsNullOrWhiteSpace($PageRanges)) {
@@ -1088,34 +1371,114 @@ $BtnStart.Add_Click({
             continue
         }
 
-        # Skip transported files
+        # Skip transported files that were already moved
         if ($SkippedExports -contains "$OutputName.pdf") {
+            Write-Host "🚀 Skipping already transported file: $OutputName.pdf"
             continue
         }
 
-        # Attempt to print the PDF
+        # Skip if output file already exists in current batch
+        if (Test-Path $OutputFilePath) {
+            Write-Host "✅ Skipping existing file: $OutputFilePath"
+            continue
+        }
+
+        # Print PDF
         $Result = Print-PDF -PDFPath $PDFPath -PageRanges $PageRanges -SaveDir $SaveDir -OutputName $OutputName
+
         if ($Result -ne $null) {
-            $FailedExports += $Result
+            $FailedExports += $Result  # Store failed attempts for retry
         }
     }
 
-    # Retry failed exports if necessary
-    if ($FailedExports.Count -gt 0) {
-        Close-AllEdgeAndPrintProcesses  # Close all Edge & Print operations before retry
-        Write-Host "🔄 Retrying failed exports..."
-        Retry-FailedExports -FailedExports $FailedExports
-    }
-
-    # Close overlay once processing is done
+    # Close overlay after processing
     Close-Overlay
 
-    # Move exported files to user-selected destination
-    Move-ExportedFiles -BatchFolder $BatchFolder
+    return $FailedExports  # Return list of failed exports
+}
 
-    # Stop logging
-    Stop-Logging
-})
+function Retry-FailedExports {
+    param (
+        [array]$FailedExports,
+        [int]$MaxRetries = 3
+    )
+
+    if (-not $FailedExports -or $FailedExports.Count -eq 0) {
+        Write-Host "✅ No failed exports to retry. Skipping retry process."
+        return
+    }
+
+    Write-Host "🔄 Retrying failed exports..."
+    $RetryCount = @{}
+
+    # Initialize Retry Counts
+    foreach ($FailedExport in $FailedExports) {
+        if ($FailedExport.OutputName -and -not $RetryCount.ContainsKey($FailedExport.OutputName)) {
+            $RetryCount[$FailedExport.OutputName] = 0
+        }
+    }
+
+    while ($FailedExports.Count -gt 0) {
+        $NewFailedExports = @()
+
+        foreach ($Export in $FailedExports) {
+            $OutputFilePath = Join-Path $Export.SaveDir "$($Export.OutputName).pdf"
+
+            # Skip if the file was successfully created in the meantime
+            if (Test-Path $OutputFilePath) {
+                Write-Host "✅ Skipping re-export: File already exists: $OutputFilePath"
+                continue
+            }
+
+            # Cancel process if user has aborted
+            if ($Global:CancelPrint) {
+                Write-Host "❌ Export retry process canceled by user."
+                Close-Overlay
+                return
+            }
+
+            # **Ensure Edge & Print processes are fully closed before retrying**
+            Close-AllEdgeProcesses
+            Clear-PrintQueue
+            Start-Sleep -Seconds 2  # Allow time for processes to terminate
+
+            # Check retry count before proceeding
+            if ($RetryCount[$Export.OutputName] -lt $MaxRetries) {
+                Write-Host "🔄 Retrying export for: $($Export.OutputName)... Attempt: $($RetryCount[$Export.OutputName] + 1)"
+
+                # **Detect & auto-correct errors before retrying**
+                $Export.PageRanges = Fix-PageRange $Export.PageRanges
+                $Export.PDFPath = Find-CloseMatchPDF -MissingPDF $Export.PDFPath
+
+                # Retry print operation
+                $Result = Print-PDF -PDFPath $Export.PDFPath -PageRanges $Export.PageRanges -SaveDir $Export.SaveDir -OutputName $Export.OutputName
+
+                if (($Result -eq $null) -and (Test-Path $OutputFilePath)) {
+                    Write-Host "✅ Successfully retried export: $($Export.OutputName)"
+                } else {
+                    $NewFailedExports += $Result
+                    $RetryCount[$Export.OutputName]++
+                    Write-Host "⚠ Retry $($RetryCount[$Export.OutputName]) failed for: $($Export.OutputName)"
+                }
+            } else {
+                Write-Host "❌ Max retries reached for: $($Export.OutputName). Adding to final failed list."
+                $NewFailedExports += $Export
+            }
+        }
+
+        # Only keep truly failed exports in the retry queue
+        $FailedExports = $NewFailedExports
+    }
+
+    if ($FailedExports.Count -gt 0) {
+        Write-Host "⚠ The following files failed after $MaxRetries retries:"
+        foreach ($Failed in $FailedExports) {
+            Write-Host "   - $($Failed.OutputName) ($($Failed.PDFPath))"
+        }
+    } else {
+        Write-Host "✅ All previously failed exports were successfully retried."
+    }
+}
 
 function Move-ExportedFiles {
     param ([string]$BatchFolder)
@@ -1124,11 +1487,10 @@ function Move-ExportedFiles {
 
     if (!(Test-Path $BatchFolder)) {
         Write-Host "❌ Error: Batch folder not found: $BatchFolder"
-        Log-Message "❌ Error: Batch folder not found: $BatchFolder" -Type "ERROR"
         return
     }
 
-    # List files before moving
+    # List all PDF files that are not hidden/system files
     $ExportedFiles = Get-ChildItem -Path $BatchFolder -Filter "*.pdf" | Where-Object {
         -not $_.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and 
         -not $_.Attributes.HasFlag([System.IO.FileAttributes]::System)
@@ -1138,7 +1500,6 @@ function Move-ExportedFiles {
 
     if ($ExportedFiles.Count -eq 0) {
         Write-Host "⚠ No exported files found. Exiting move process."
-        Log-Message "⚠ No exported files found in $BatchFolder."
         return
     }
 
@@ -1151,7 +1512,6 @@ function Move-ExportedFiles {
     if ($DialogResult -eq "OK") {
         $DestinationFolder = $FolderDialog.SelectedPath
         Write-Host "📂 Moving files to: $DestinationFolder"
-        Log-Message "📂 User selected destination: $DestinationFolder"
 
         foreach ($File in $ExportedFiles) {
             $DestinationPath = Join-Path $DestinationFolder $File.Name
@@ -1192,12 +1552,140 @@ function Move-ExportedFiles {
             "All exported PDFs have been successfully moved to:`n$DestinationFolder",
             "Move Completed", "OK", "Information"
         )
-        Log-Message "✅ All exported files successfully moved."
+        Write-Host "✅ All exported files successfully moved."
     } else {
         Write-Host "⚠ User canceled file movement."
-        Log-Message "⚠ User canceled file movement."
     }
 }
+
+# ==== START BUTTON (With Full Validation, Auto-Fix, Retry, & Transport) ====
+$BtnStart.Add_Click({
+
+    # Reset all tracking variables
+    $FailedExports = @()  # Reset failed export tracking
+    $SkippedExports = @()  # Track files transported from previous exports
+    $ValidRows = 0  # Track number of valid rows
+    
+    # Generate batch timestamp and create export folder
+    $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $BatchFolder = Initialize-BatchFolder -BatchTimestamp $BatchTimestamp
+
+    # Ensure batch folder was successfully created
+    if ($BatchFolder -eq $null) {
+        return  # Stop execution if folder creation failed
+    }
+
+    # Check and transport previously exported files
+    $SkippedExports = Check-And-TransportPreviousExports -BatchFolder $BatchFolder
+
+    # Validate all rows in the DataGridView
+    $TotalRows = $DataGridView.Rows.Count - 1
+    for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
+        $Row = $DataGridView.Rows[$RowIndex]
+        $PDFFileName = $Row.Cells["Master PDF"].Value
+        $OutputName = $Row.Cells["Output Name"].Value
+        $PageRanges = $Row.Cells["Page Range"].Value
+
+        # Skip empty rows
+        if ([string]::IsNullOrWhiteSpace($PDFFileName) -and
+            [string]::IsNullOrWhiteSpace($OutputName) -and
+            [string]::IsNullOrWhiteSpace($PageRanges)) {
+            continue
+        }
+
+        # Skip files that were transported
+        if ($SkippedExports -contains "$OutputName.pdf") {
+            Write-Host "⚠ Skipping transported file: $OutputName.pdf"
+            continue
+        }
+
+        # Count valid rows
+        $ValidRows++
+
+        # Perform all validation checks (PDF existence, page range format, etc.)
+        $ValidPDF = Validate-PDFExists -PDFFileName $PDFFileName -RowIndex $RowIndex
+        $ValidPageRange = Validate-PageRangeFormat -PageRanges $PageRanges -RowIndex $RowIndex
+        $ValidOutputName = Validate-DuplicateOutputName -OutputName $OutputName -RowIndex $RowIndex
+
+        # If any validation fails, prompt and stop execution
+        if (-not $ValidPDF -or -not $ValidPageRange -or -not $ValidOutputName) {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Validation errors detected. Please fix the errors and restart.",
+                "Validation Error", "OK", "Error"
+            )
+            return
+        }
+
+        # If page range is valid, check if it exists in the actual PDF
+        if (-not Validate-PageRangeInPDF -PDFFileName $PDFFileName -PageRanges $PageRanges -RowIndex $RowIndex) {
+            [System.Windows.Forms.MessageBox]::Show(
+                "One or more page ranges exceed the total pages in the PDF.",
+                "Page Range Error", "OK", "Error"
+            )
+            return
+        }
+    }
+
+    # Stop execution if there are no valid rows
+    if ($ValidRows -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "🚨 No valid rows found. Please enter at least one row before starting.",
+            "Validation Error", "OK", "Error"
+        )
+        return
+    }
+
+    # Start logging and show processing overlay
+    Start-Logging -BatchTimestamp $BatchTimestamp
+    Show-Overlay -ProgressMax 5 -BatchTimestamp $BatchTimestamp
+
+    # === Process Each Row in the DataGridView ===
+    for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
+        $Row = $DataGridView.Rows[$RowIndex]
+        $PDFFileName = $Row.Cells["Master PDF"].Value
+        $OutputName = $Row.Cells["Output Name"].Value
+        $PageRanges = $Row.Cells["Page Range"].Value
+        $PDFPath = Join-Path $MasterPDFDir $PDFFileName
+        $SaveDir = $BatchFolder
+
+        # Skip rows with missing required data
+        if ([string]::IsNullOrWhiteSpace($PDFFileName) -or
+            [string]::IsNullOrWhiteSpace($OutputName) -or
+            [string]::IsNullOrWhiteSpace($PageRanges)) {
+            Write-Host "⚠ Skipping empty or incomplete row: $($RowIndex + 1)"
+            continue
+        }
+
+        # Skip transported files
+        if ($SkippedExports -contains "$OutputName.pdf") {
+            continue
+        }
+
+        # Attempt to print the PDF
+        $Result = Print-PDF -PDFPath $PDFPath -PageRanges $PageRanges -SaveDir $SaveDir -OutputName $OutputName
+        if ($Result -ne $null) {
+            $FailedExports += $Result  # Track failed exports
+        }
+    }
+
+    # Retry failed exports if necessary
+    if ($FailedExports.Count -gt 0) {
+        Close-AllEdgeAndPrintProcesses  # Close all Edge & Print operations before retrying
+        Write-Host "🔄 Retrying failed exports..."
+        Retry-FailedExports -FailedExports $FailedExports
+    }
+
+    # Close overlay once processing is done
+    Close-Overlay
+
+    # Move exported files to user-selected destination
+    Move-ExportedFiles -BatchFolder $BatchFolder
+
+    # Stop logging
+    Stop-Logging
+})
+
+
 
 function Format-PageRange {
     param ([string]$PageRange)
