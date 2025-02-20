@@ -9,11 +9,27 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
     exit
 }
 
-# === Define Directories ===
-$ProgramDir = Join-Path $env:USERPROFILE "PDF_Extractor"
+### === Define Directories Properly ===
+$FallbackDir = "C:\PDF_Extractor"
+
+try {
+    $UserDocuments = [System.Environment]::GetFolderPath("MyDocuments")
+    if ([string]::IsNullOrWhiteSpace($UserDocuments)) {
+        throw "Unable to determine user 'Documents' folder."
+    }
+} catch {
+    Write-Host "⚠ Warning: Failed to fetch 'Documents' directory. Using fallback location: $FallbackDir"
+    $UserDocuments = $FallbackDir
+}
+
+# Allow custom base directory from config.txt
+$ProgramDir = Join-Path $UserDocuments "PDF_Extractor"
+$MasterPDFDir = Join-Path $ProgramDir "Master_PDFs"
+$ExportsDir = Join-Path $ProgramDir "Exports"
+$LogDir = Join-Path $ProgramDir "Logs"
 $DependenciesDir = Join-Path $ProgramDir "dependencies"
 $ScriptsDir = Join-Path $DependenciesDir "scripts"
-$PythonExe = Join-Path $DependenciesDir "Python" "python.exe"
+$PythonExe = "$UserPythonFolder\\python.exe"
 
 # === Ensure Python Exists ===
 if (!(Test-Path $PythonExe)) {
