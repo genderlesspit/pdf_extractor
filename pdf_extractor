@@ -979,16 +979,29 @@ function Validate-PageRangeWithinPDF {
 
     if (![string]::IsNullOrWhiteSpace($PageRanges) -and (Test-Path $PDFPath)) {
         $ValidPageNumbers = Get-PDFPageCount -PDFPath $PDFPath
-        $InvalidPages = @()
 
-        # Split the input page ranges into an array
+        if ($ValidPageNumbers -eq $null -or $ValidPageNumbers -lt 1) {
+            Write-Host "❌ Error: Could not determine total pages for PDF at $PDFPath"
+            [System.Windows.Forms.MessageBox]::Show(
+                "🚨 Error: Could not retrieve total pages for PDF.`n" +
+                "📄 PDF: ${PDFPath} `n" +
+                "Please ensure the file is accessible and not corrupt.",
+                "PDF Page Count Error",
+                "OK",
+                "Error"
+            )
+            return $false
+        }
+
+        # Validate page range against actual page count
+        $InvalidPages = @()
         $PageGroups = $PageRanges -split ","
 
         foreach ($Range in $PageGroups) {
-            if ($Range -match "^\d+-\d+$") {  # Range format (e.g., 3-5)
+            if ($Range -match "^\d+-\d+$") {  # Page range (e.g., 3-5)
                 $Start, $End = $Range -split "-"
                 for ($i = [int]$Start; $i -le [int]$End; $i++) {
-                    if ($i -lt 1 -or $i -gt $ValidPageNumbers) {  # Page is out of bounds
+                    if ($i -lt 1 -or $i -gt $ValidPageNumbers) {
                         $InvalidPages += $i
                     }
                 }
@@ -999,20 +1012,18 @@ function Validate-PageRangeWithinPDF {
             }
         }
 
-        # If invalid pages exist, return error message
+        # Display error if invalid pages exist
         if ($InvalidPages.Count -gt 0) {
-            $ErrorMessage = "🚨 Invalid page numbers detected!`n" +
-                            "📄 PDF: ${PDFPath} (Total Pages: ${ValidPageNumbers})`n" +
-                            "❌ Out-of-Range Pages in Row ${RowIndex}: " + ($InvalidPages -join ", ")
-
             [System.Windows.Forms.MessageBox]::Show(
-                $ErrorMessage,
+                "🚨 Invalid page numbers detected!`n" +
+                "📄 PDF: ${PDFPath} (Total Pages: ${ValidPageNumbers})`n" +
+                "❌ Out-of-Range Pages in Row ${RowIndex}: " + ($InvalidPages -join ", "),
                 "Page Range Error",
                 "OK",
                 "Error"
             )
 
-            Write-Host $ErrorMessage
+            Write-Host "❌ Invalid pages detected in Row ${RowIndex}: $($InvalidPages -join ', ')"
             return $false
         }
     }
