@@ -510,4 +510,9 @@ Assign-ButtonActions -Button $BtnStart -Action {
 
 # Section 10
 
-
+# === Start GUI Properly Without Exiting ===
+$Form.Show()
+while ($Form.Visible) {
+    Start-Sleep -Milliseconds 100
+    [System.Windows.Forms.Application]::DoEvents()
+}
