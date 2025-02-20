@@ -23,12 +23,12 @@ function Extract-PDFPages {
     $OutputPath = Join-Path $ExportsDir "$OutputName.pdf"
 
     if (!(Test-Path $PDFPath)) {
-        Write-Host "❌ File not found: `${PDFPath}`"
+        Write-Host "❌ File not found: ${PDFPath}"
         return $false
     }
 
     try {
-        Write-Host "📄 Extracting pages `${PageRanges}` from `${PDFName}` → `${OutputName}.pdf`"
+        Write-Host "Extracting pages ${PageRanges} from ${PDFName} → ${OutputName}.pdf"
 
         # Replace this with actual PDF extraction logic
         # Example: Using a PowerShell module like PDFtk or Pdfium
@@ -36,11 +36,11 @@ function Extract-PDFPages {
 
         # Simulated success
         Start-Sleep -Seconds 2  # Simulate processing time
-        Write-Host "✅ Extraction complete for `${OutputName}.pdf`"
+        Write-Host "✅ Extraction complete for ${OutputName}.pdf"
 
         return $true
     } catch {
-        Write-Host "❌ Error extracting pages from `${PDFName}` - Exception: $($_.Exception.Message)"
+        Write-Host "❌ Error extracting pages from ${PDFName} - Exception: $($_.Exception.Message)"
         return $false
     }
 }
@@ -52,7 +52,7 @@ function Retry-FailedExtractions {
     try {
         $FailedExtractions = Get-Content -Raw -Path $FailureLogFile | ConvertFrom-Json
     } catch {
-        Write-Host "⚠ Error reading `${FailureLogFile}`. Skipping retries."
+        Write-Host "Error reading ${FailureLogFile}. Skipping retries."
         return
     }
 
@@ -64,21 +64,30 @@ function Retry-FailedExtractions {
 
     foreach ($Key in $FailedExtractions.Keys) {
         $Attempts = $FailedExtractions[$Key]
-        $Parts = $Key -split "\|"
+        
+        # Properly split the key
+        $Parts = $Key -split "\|", 3
+
+        # Ensure correct splitting
+        if ($Parts.Count -lt 3) {
+            Write-Host "Invalid retry data format for: ${Key}"
+            continue
+        }
+
         $PDFName = $Parts[0]
         $OutputName = $Parts[1]
         $PageRanges = $Parts[2]
 
-        Write-Host "Retrying extraction ($Attempts/$MAX_RETRIES) for: `${OutputName}`"
+        Write-Host "Retrying extraction ($Attempts/$MAX_RETRIES) for: ${OutputName}"
 
         $Success = Extract-PDFPages -PDFName $PDFName -PageRanges $PageRanges -OutputName $OutputName
 
         if (!$Success -and $Attempts -lt $MAX_RETRIES) {
             $NewFailedExtractions[$Key] = $Attempts + 1
         } elseif ($Success) {
-            Write-Host "✅ Successfully retried: `${OutputName}`"
+            Write-Host "✅ Successfully retried: ${OutputName}"
         } else {
-            Write-Host "❌ Max retries reached for: `${OutputName}`"
+            Write-Host "❌ Max retries reached for: ${OutputName}"
         }
     }
 
@@ -111,13 +120,18 @@ function Process-Extractions {
             $OutputName = $Row."Output Name"
             $PageRanges = $Row."Page Range"
 
+            if (-not $PDFName -or -not $OutputName -or -not $PageRanges) {
+                Write-Host "Skipping row due to missing data: ${PDFName}, ${OutputName}, ${PageRanges}"
+                continue
+            }
+
             $Success = Extract-PDFPages -PDFName $PDFName -PageRanges $PageRanges -OutputName $OutputName
 
             if (!$Success) {
-                $FailedExtractions["$PDFName|$OutputName|$PageRanges"] = 0
+                $FailedExtractions["${PDFName}|${OutputName}|${PageRanges}"] = 0
             }
         } catch {
-            Write-Host "❌ Skipping invalid row."
+            Write-Host "Skipping invalid row due to error: $($_.Exception.Message)"
         }
     }
 
@@ -130,3 +144,4 @@ function Process-Extractions {
 
 # Run the extraction process
 Process-Extractions
+
