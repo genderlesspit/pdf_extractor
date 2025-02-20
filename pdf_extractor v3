@@ -224,3 +224,49 @@ if (Test-Path $ExtractPath) {
     Write-Host "❌ Error: Extraction failed or directory does not exist."
     exit
 }
+
+# === Check if pip is Working Properly ===
+Log-Message "🔍 Checking if pip is working..."
+$PipCheck = & "$PythonExe" -m pip --version 2>&1
+
+if ($PipCheck -match "pip") {
+    Log-Message "✅ pip is installed: $PipCheck"
+} else {
+    Log-Message "❌ pip is broken or missing. Reinstalling..."
+    
+    try {
+        # Download pip installer
+        Log-Message "📥 Downloading get-pip.py..."
+        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $PipInstallerPath -ErrorAction Stop
+
+        # Reinstall pip
+        Log-Message "🔄 Reinstalling pip..."
+        & "$PythonExe" $PipInstallerPath --no-cache-dir --target="$DependenciesDir"
+        Log-Message "✅ pip reinstalled successfully."
+    } catch { 
+        Log-Message "❌ Error reinstalling pip: $_"
+        exit
+    }
+}
+
+# === Ensure pip is Up to Date ===
+Log-Message "🔄 Updating pip..."
+$PipUpgrade = & "$PythonExe" -m pip install --upgrade --no-cache-dir --target="$DependenciesDir" pip 2>&1
+
+if ($PipUpgrade -match "Successfully installed") {
+    Log-Message "✅ pip updated successfully."
+} else {
+    Log-Message "⚠ pip was already up to date or update failed: $PipUpgrade"
+}
+
+Log-Message "✅ pip check and fix process completed."
+
+# === Execute `setup.py` ===
+Write-Host "🚀 Running setup.py..."
+try {
+    Start-Process -FilePath $PythonExe -ArgumentList "`"$SetupScriptPath`"" -NoNewWindow -Wait
+    Write-Host "✅ setup.py executed successfully."
+} catch {
+    Write-Host "❌ Error executing setup.py: $_"
+    exit
+}
