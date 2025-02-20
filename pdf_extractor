@@ -930,12 +930,14 @@ function Validate-Inputs {
     }
 }
 
+# === SECTION 7: VALIDATION SYSTEM === 
+
 function Validate-PDFExists {
     param ([string]$PDFPath, [string]$PDFFileName, [int]$RowIndex)
 
     if (![string]::IsNullOrWhiteSpace($PDFFileName) -and !(Test-Path $PDFPath)) {
-        Write-Host "❌ PDF not found: $PDFFileName (Row: $RowIndex)"
-        return "$PDFFileName (Row: $RowIndex)"
+        Write-Host "❌ PDF not found: $PDFFileName (Row: ${RowIndex})"
+        return "Row ${RowIndex}: ${PDFFileName}"
     }
     return $null
 }
@@ -944,8 +946,8 @@ function Validate-PageRangeFormat {
     param ([string]$PageRanges, [int]$RowIndex)
 
     if (![string]::IsNullOrWhiteSpace($PageRanges) -and $PageRanges -match "\s") {
-        Write-Host "❌ Invalid Page Range detected (Row $RowIndex): $PageRanges"
-        return "Row $RowIndex: $PageRanges"
+        Write-Host "❌ Invalid Page Range detected (Row ${RowIndex}): ${PageRanges}"
+        return "Row ${RowIndex}: ${PageRanges}"
     }
     return $null
 }
@@ -956,8 +958,22 @@ function Validate-PageRangeWithinPDF {
     if (![string]::IsNullOrWhiteSpace($PageRanges) -and (Test-Path $PDFPath)) {
         $ValidPageNumbers = Get-PDFPageCount -PDFPath $PDFPath
         if (!(Validate-PageRange -PageRange $PageRanges -TotalPages $ValidPageNumbers)) {
-            Write-Host "❌ Page range out of bounds in PDF (Row $RowIndex): $PageRanges"
-            return "Row $RowIndex: $PageRanges"
+            Write-Host "❌ Page range out of bounds in PDF (Row ${RowIndex}): ${PageRanges}"
+            return "Row ${RowIndex}: ${PageRanges}"
+        }
+    }
+    return $null
+}
+
+function Validate-DuplicateOutputNames {
+    param ([string]$OutputName, [int]$RowIndex, [hashtable]$OutputNameSet)
+
+    if (![string]::IsNullOrWhiteSpace($OutputName)) {
+        if ($OutputNameSet.ContainsKey($OutputName)) {
+            Write-Host "❌ Duplicate Output Name detected (Row ${RowIndex}): ${OutputName}"
+            return "Row ${RowIndex}: ${OutputName}"
+        } else {
+            $OutputNameSet[$OutputName] = $true
         }
     }
     return $null
@@ -1489,25 +1505,23 @@ function Move-ExportedFiles {
     }
 }
 
-# ==== START BUTTON (With Full Validation, Auto-Fix, Retry, & Transport) ====
+# === START BUTTON FUNCTION ===
 $BtnStart.Add_Click({
+    # Reset tracking variables
+    $FailedExports = @()
+    $SkippedExports = @()
+    $ValidRows = 0
 
-    # Reset all tracking variables
-    $FailedExports = @()  # Reset failed export tracking
-    $SkippedExports = @()  # Track files transported from previous exports
-    $ValidRows = 0  # Track number of valid rows
-    
     # Generate batch timestamp and create export folder
     $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $BatchFolder = Initialize-BatchFolder -BatchTimestamp $BatchTimestamp
 
-    # Ensure batch folder was successfully created
     if ($BatchFolder -eq $null) {
-        return  # Stop execution if folder creation failed
+        return
     }
 
     # Check and transport previously exported files
-    $SkippedExports = Check-And-TransportPreviousExports -BatchFolder $BatchFolder
+    $SkippedExports = Check-PreviousExports -BatchFolder $BatchFolder
 
     # Validate all rows in the DataGridView
     $TotalRows = $DataGridView.Rows.Count - 1
@@ -1517,29 +1531,25 @@ $BtnStart.Add_Click({
         $OutputName = $Row.Cells["Output Name"].Value
         $PageRanges = $Row.Cells["Page Range"].Value
 
-        # Skip empty rows
-        if ([string]::IsNullOrWhiteSpace($PDFFileName) -and
-            [string]::IsNullOrWhiteSpace($OutputName) -and
+        if ([string]::IsNullOrWhiteSpace($PDFFileName) -and 
+            [string]::IsNullOrWhiteSpace($OutputName) -and 
             [string]::IsNullOrWhiteSpace($PageRanges)) {
             continue
         }
 
-        # Skip files that were transported
         if ($SkippedExports -contains "$OutputName.pdf") {
             Write-Host "⚠ Skipping transported file: $OutputName.pdf"
             continue
         }
 
-        # Count valid rows
         $ValidRows++
 
-        # Perform all validation checks (PDF existence, page range format, etc.)
+        # Perform validation checks
         $ValidPDF = Validate-PDFExists -PDFFileName $PDFFileName -RowIndex $RowIndex
         $ValidPageRange = Validate-PageRangeFormat -PageRanges $PageRanges -RowIndex $RowIndex
-        $ValidOutputName = Validate-DuplicateOutputName -OutputName $OutputName -RowIndex $RowIndex
+        $ValidOutputName = Validate-DuplicateOutputNames -OutputName $OutputName -RowIndex $RowIndex -OutputNameSet $OutputNameSet
 
-        # If any validation fails, prompt and stop execution
-        if (-not $ValidPDF -or -not $ValidPageRange -or -not $ValidOutputName) {
+        if ($ValidPDF -or $ValidPageRange -or $ValidOutputName) {
             [System.Windows.Forms.MessageBox]::Show(
                 "Validation errors detected. Please fix the errors and restart.",
                 "Validation Error", "OK", "Error"
@@ -1547,8 +1557,7 @@ $BtnStart.Add_Click({
             return
         }
 
-        # If page range is valid, check if it exists in the actual PDF
-        if (-not Validate-PageRangeInPDF -PDFFileName $PDFFileName -PageRanges $PageRanges -RowIndex $RowIndex) {
+        if (-not (Validate-PageRangeWithinPDF -PDFPath (Join-Path $MasterPDFDir $PDFFileName) -PageRanges $PageRanges -RowIndex $RowIndex)) {
             [System.Windows.Forms.MessageBox]::Show(
                 "One or more page ranges exceed the total pages in the PDF.",
                 "Page Range Error", "OK", "Error"
@@ -1557,7 +1566,6 @@ $BtnStart.Add_Click({
         }
     }
 
-    # Stop execution if there are no valid rows
     if ($ValidRows -eq 0) {
         [System.Windows.Forms.MessageBox]::Show(
             "🚨 No valid rows found. Please enter at least one row before starting.",
@@ -1570,7 +1578,7 @@ $BtnStart.Add_Click({
     Start-Logging -BatchTimestamp $BatchTimestamp
     Show-Overlay -ProgressMax 5 -BatchTimestamp $BatchTimestamp
 
-    # === Process Each Row in the DataGridView ===
+    # Process Each Row
     for ($RowIndex = 0; $RowIndex -lt $TotalRows; $RowIndex++) {
         $Row = $DataGridView.Rows[$RowIndex]
         $PDFFileName = $Row.Cells["Master PDF"].Value
@@ -1579,57 +1587,41 @@ $BtnStart.Add_Click({
         $PDFPath = Join-Path $MasterPDFDir $PDFFileName
         $SaveDir = $BatchFolder
 
-        # Skip rows with missing required data
-        if ([string]::IsNullOrWhiteSpace($PDFFileName) -or
-            [string]::IsNullOrWhiteSpace($OutputName) -or
+        if ([string]::IsNullOrWhiteSpace($PDFFileName) -or 
+            [string]::IsNullOrWhiteSpace($OutputName) -or 
             [string]::IsNullOrWhiteSpace($PageRanges)) {
-            Write-Host "⚠ Skipping empty or incomplete row: $($RowIndex + 1)"
+            Write-Host "⚠ Skipping empty or incomplete row: ${RowIndex}"
             continue
         }
 
-        # Skip transported files
         if ($SkippedExports -contains "$OutputName.pdf") {
             continue
         }
 
-        # Attempt to print the PDF
         $Result = Print-PDF -PDFPath $PDFPath -PageRanges $PageRanges -SaveDir $SaveDir -OutputName $OutputName
         if ($Result -ne $null) {
-            $FailedExports += $Result  # Track failed exports
+            $FailedExports += $Result
         }
     }
 
-    # Retry failed exports if necessary
     if ($FailedExports.Count -gt 0) {
-        Close-AllEdgeAndPrintProcesses  # Close all Edge & Print operations before retrying
-        Write-Host "🔄 Retrying failed exports..."
+        Close-AllEdgeProcesses
+        Clear-PrintQueue
+        Start-Sleep -Seconds 2
         Retry-FailedExports -FailedExports $FailedExports
     }
 
-    # Close overlay once processing is done
     Close-Overlay
-
-    # Move exported files to user-selected destination
     Move-ExportedFiles -BatchFolder $BatchFolder
-
-    # Stop logging
     Stop-Logging
 })
 
-function Format-PageRange {
-    param ([string]$PageRange)
-
-    # Remove ALL spaces
-    $PageRange = $PageRange -replace '\s', ''
-
-    # Ensure valid formatting (e.g., "3-5,6-9,11,15-17")
-    if ($PageRange -match "^\d+(-\d+)?(,\d+(-\d+)?)*$") {
-        return $PageRange  # Return fixed range
-    } else {
-        return $null  # Invalid format
-    }
+# Ensure the script does not close until the GUI is properly closed
+$Form.Show()
+while ($Form.Visible) {
+    Start-Sleep -Milliseconds 100
+    [System.Windows.Forms.Application]::DoEvents()
 }
-
 function Find-CloseMatchPDF {
     param (
         [string]$MissingPDF
@@ -1685,40 +1677,6 @@ function Find-CloseMatchPDF {
     }
 
     return $null
-}
-
-function Get-LevenshteinDistance {
-    param (
-        [string]$String1,
-        [string]$String2
-    )
-
-    $Len1 = $String1.Length
-    $Len2 = $String2.Length
-
-    # Explicitly initialize the 2D array with integer values
-    $Matrix = New-Object 'System.Int32[,]' ($Len1 + 1), ($Len2 + 1)
-
-    # Initialize the matrix
-    for ($i = 0; $i -le $Len1; $i++) { $Matrix[$i, 0] = [int]$i }
-    for ($j = 0; $j -le $Len2; $j++) { $Matrix[0, $j] = [int]$j }
-
-    # Compute the Levenshtein distance
-    for ($i = 1; $i -le $Len1; $i++) {
-        for ($j = 1; $j -le $Len2; $j++) {
-            $Cost = if ($String1[$i - 1] -eq $String2[$j - 1]) { 0 } else { 1 }
-
-            # Retrieve integer values explicitly
-            $Delete = [int]($Matrix.GetValue($i - 1, $j)) + 1  # Deletion
-            $Insert = [int]($Matrix.GetValue($i, $j - 1)) + 1  # Insertion
-            $Substitute = [int]($Matrix.GetValue($i - 1, $j - 1)) + $Cost  # Substitution
-
-            # Assign the minimum of the three operations
-            $Matrix.SetValue([System.Math]::Min([System.Math]::Min($Delete, $Insert), $Substitute), $i, $j)
-        }
-    }
-
-    return $Matrix.GetValue($Len1, $Len2)  # Return the final Levenshtein distance
 }
 
 # Start logging
