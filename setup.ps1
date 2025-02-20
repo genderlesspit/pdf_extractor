@@ -82,7 +82,6 @@ if (-not $ProgramDir -or $ProgramDir -eq "") {
     exit 1
 }
 
-# Define GUI script path
 $GUIPath = Join-Path $ProgramDir "GUI.ps1"
 
 # Check if GUI.ps1 exists
@@ -93,4 +92,12 @@ if (!(Test-Path $GUIPath)) {
 }
 
 Write-Host "🚀 Launching GUI from: $GUIPath"
-Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$GUIPath`"" -NoNewWindow -Wait
+
+# Run GUI in the same session (avoiding privilege issues)
+try {
+    Invoke-Expression -Command "powershell -ExecutionPolicy Bypass -File `"$GUIPath`""
+} catch {
+    Write-Host "❌ Failed to launch GUI: $($_.Exception.Message)"
+    [System.Windows.Forms.MessageBox]::Show("Failed to launch GUI: $($_.Exception.Message)", "Error", "OK", "Error")
+    exit 1
+}
