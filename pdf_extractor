@@ -1691,6 +1691,13 @@ $BtnStart.Add_Click({
 
 })  # ✅ This closing brace was missing
 
+# Debugging: Confirm function exists
+if (Get-Command Get-PDFPageCount -ErrorAction SilentlyContinue) {
+    Write-Host "✅ Function Get-PDFPageCount is loaded successfully."
+} else {
+    Write-Host "❌ Function Get-PDFPageCount is NOT recognized by PowerShell."
+}
+
 # Ensure the script does not close until the GUI is properly closed
 $Form.ShowDialog()
 while ($Form.Visible) {
