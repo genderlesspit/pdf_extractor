@@ -91,9 +91,7 @@ if (!(Test-Path $GUIPath)) {
     exit 1
 }
 
-Write-Host "🚀 Running GUI from: $GUIPath as a background job"
+Write-Host "🚀 Running GUI from: $GUIPath using cmd.exe"
 
-# Start GUI as a background job
-Start-Job -ScriptBlock {
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$using:GUIPath`""
-}
+# Run GUI.ps1 using cmd.exe to prevent PowerShell restrictions
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c start powershell -ExecutionPolicy Bypass -File `"$GUIPath`""
