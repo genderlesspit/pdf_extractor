@@ -91,11 +91,11 @@ if (!(Test-Path $GUIPath)) {
     exit 1
 }
 
-Write-Host "🚀 Launching GUI from: $GUIPath"
+Write-Host "🚀 Running GUI from: $GUIPath"
 
-# Run GUI in the same session (avoiding privilege issues)
+# Run GUI.ps1 within the current session (dot sourcing to avoid process termination)
 try {
-    Invoke-Expression -Command "powershell -ExecutionPolicy Bypass -File `"$GUIPath`""
+    . "$GUIPath"
 } catch {
     Write-Host "❌ Failed to launch GUI: $($_.Exception.Message)"
     [System.Windows.Forms.MessageBox]::Show("Failed to launch GUI: $($_.Exception.Message)", "Error", "OK", "Error")
