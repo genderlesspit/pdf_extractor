@@ -99,3 +99,128 @@ if ($MissingPackages -eq "") {
 
 Log-Message "Python setup completed."
 
+### === Define Directories Properly ===
+$FallbackDir = "C:\PDF_Extractor"
+
+try {
+    $UserDocuments = [System.Environment]::GetFolderPath("MyDocuments")
+    if ([string]::IsNullOrWhiteSpace($UserDocuments)) {
+        throw "Unable to determine user 'Documents' folder."
+    }
+} catch {
+    Write-Host "⚠ Warning: Failed to fetch 'Documents' directory. Using fallback location: $FallbackDir"
+    $UserDocuments = $FallbackDir
+}
+
+# Allow custom base directory from config.txt
+$ProgramDir = Join-Path $UserDocuments "PDF_Extractor"
+$MasterPDFDir = Join-Path $ProgramDir "Master_PDFs"
+$ExportsDir = Join-Path $ProgramDir "Exports"
+$LogDir = Join-Path $ProgramDir "Logs"
+
+### === Load Custom Directory from config.txt (if available) ===
+$ConfigPath = ".\config.txt"
+
+if (Test-Path $ConfigPath) {
+    try {
+        # Read and parse config file
+        $ConfigContent = Get-Content $ConfigPath | ConvertFrom-StringData
+        $CustomPath = $ConfigContent["ProgramDir"].Trim()
+
+        if (![string]::IsNullOrWhiteSpace($CustomPath) -and (Test-Path $CustomPath)) {
+            $ProgramDir = $CustomPath
+            $MasterPDFDir = Join-Path $ProgramDir "Master_PDFs"
+            $ExportsDir = Join-Path $ProgramDir "Exports"
+            $LogDir = Join-Path $ProgramDir "Logs"
+            Write-Host "📂 Using custom Program Directory: $ProgramDir"
+        } else {
+            Write-Host "⚠ Invalid or missing directory in config.txt. Resetting to default."
+        }
+    }
+    catch {
+        Write-Host "❌ Error reading config.txt: $_. Using default directories."
+    }
+}
+
+### === Ensure all necessary directories exist ===
+@($ProgramDir, $MasterPDFDir, $ExportsDir, $LogDir) | ForEach-Object {
+    try {
+        if (!(Test-Path $_)) { 
+            if (-not (Test-Path (Split-Path $_))) {
+                throw "Parent directory does not exist: $(Split-Path $_)"
+            }
+            New-Item -ItemType Directory -Path $_ -Force -ErrorAction Stop | Out-Null
+            Write-Host "✅ Created directory: $_"
+        }
+    }
+    catch {
+        Write-Host "❌ Error creating directory '$_': $($_.Exception.Message)"
+    }
+}
+
+# === Define User-Writable Directory ===
+$DependenciesDir = Join-Path $ProgramDir "dependencies"
+$GitHubTarUrl = "https://github.com/genderlesspit/pdf_extractor/archive/refs/tags/test.tar.gz"
+$TarFilePath = Join-Path $DependenciesDir "test.tar.gz"
+
+# Ensure dependencies directory exists
+if (!(Test-Path $DependenciesDir)) { 
+    New-Item -ItemType Directory -Path $DependenciesDir -Force | Out-Null 
+    Write-Host "✅ Created dependencies directory: $DependenciesDir"
+}
+
+# === Download `test.tar.gz` from GitHub ===
+Write-Host "📥 Downloading test.tar.gz from GitHub..."
+try {
+    Invoke-WebRequest -Uri $GitHubTarUrl -OutFile $TarFilePath -UseBasicParsing -ErrorAction Stop
+    Write-Host "✅ Successfully downloaded test.tar.gz to: $TarFilePath"
+} catch {
+    Write-Host "❌ Failed to download test.tar.gz: $_"
+    exit
+}
+
+# Verify the file exists after download
+if (Test-Path $TarFilePath) {
+    Write-Host "✅ File verification successful: $TarFilePath"
+} else {
+    Write-Host "❌ Error: File was not downloaded properly."
+    exit
+}
+
+$ExtractPath = Join-Path $DependenciesDir "github-scripts"
+
+# Ensure dependencies directory exists
+if (!(Test-Path $DependenciesDir)) { 
+    New-Item -ItemType Directory -Path $DependenciesDir -Force | Out-Null 
+    Write-Host "✅ Created dependencies directory: $DependenciesDir"
+}
+
+# Verify the tar.gz file exists before extracting
+if (!(Test-Path $TarFilePath)) {
+    Write-Host "❌ Error: test.tar.gz not found at $TarFilePath. Please download it first."
+    exit
+}
+
+# Ensure the extraction directory exists
+if (!(Test-Path $ExtractPath)) {
+    New-Item -ItemType Directory -Path $ExtractPath -Force | Out-Null
+    Write-Host "✅ Created extraction directory: $ExtractPath"
+}
+
+# === Extract `test.tar.gz` ===
+Write-Host "📂 Extracting test.tar.gz to $ExtractPath..."
+try {
+    tar -xf $TarFilePath -C $ExtractPath
+    Write-Host "✅ Successfully extracted test.tar.gz"
+} catch {
+    Write-Host "❌ Extraction failed: $_"
+    exit
+}
+
+# Verify extraction
+if (Test-Path $ExtractPath) {
+    Write-Host "✅ Extraction verification successful. Files are in: $ExtractPath"
+} else {
+    Write-Host "❌ Error: Extraction failed or directory does not exist."
+    exit
+}
