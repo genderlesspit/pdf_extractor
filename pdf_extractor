@@ -265,7 +265,6 @@ function Show-Overlay {
     Write-Host "🖥 Full-screen overlay displayed for batch: $BatchTimestamp."
 }
 
-
 # Function to update overlay progress and message dynamically
 function Update-Overlay {
     param (
@@ -299,6 +298,8 @@ function Close-Overlay {
         Write-Host "✔ Overlay closed."
     }
 }
+
+# === SECTION 6: PRINT MECHANICS === 
 
 # === Function to Retry Failed Exports (Fixed) ===
 function Retry-FailedExports {
@@ -579,81 +580,7 @@ function Close-EdgeTab {
     Write-Host "⚠️ No matching Edge tab found for $PDFPath"
 }
 
-function Move-ExportedFiles {
-    param ([string]$BatchFolder)
-
-    Write-Host "🔍 Checking batch folder: $BatchFolder"
-
-    if (!(Test-Path $BatchFolder)) {
-        Write-Host "❌ Error: Batch folder not found: $BatchFolder"
-        Log-Message "❌ Error: Batch folder not found: $BatchFolder" -Type "ERROR"
-        return
-    }
-
-    # List files before moving
-    $ExportedFiles = Get-ChildItem -Path $BatchFolder -Filter "*.pdf" | Where-Object {
-        -not $_.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and 
-        -not $_.Attributes.HasFlag([System.IO.FileAttributes]::System)
-    }
-
-    Write-Host "📄 Found $($ExportedFiles.Count) exported PDF files."
-
-    if ($ExportedFiles.Count -eq 0) {
-        Write-Host "⚠ No exported files found. Exiting move process."
-        Log-Message "⚠ No exported files found in $BatchFolder."
-        return
-    }
-
-    # Open folder selection dialog
-    Add-Type -AssemblyName System.Windows.Forms
-    $FolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $FolderDialog.Description = "Select Destination Folder to Move Exported PDFs"
-    $DialogResult = $FolderDialog.ShowDialog()
-
-    if ($DialogResult -eq "OK") {
-        $DestinationFolder = $FolderDialog.SelectedPath
-        Write-Host "📂 Moving files to: $DestinationFolder"
-        Log-Message "📂 User selected destination: $DestinationFolder"
-
-        foreach ($File in $ExportedFiles) {
-            $DestinationPath = Join-Path $DestinationFolder $File.Name
-
-            # Check for overwrite conflicts
-            if (Test-Path $DestinationPath) {
-                Write-Host "⚠ File already exists: $DestinationPath"
-                $Response = [System.Windows.Forms.MessageBox]::Show("File $($File.Name) already exists. Overwrite?", "File Exists", "YesNoCancel", "Warning")
-
-                if ($Response -eq "Yes") {
-                    Move-Item -Path $File.FullName -Destination $DestinationPath -Force -ErrorAction Stop
-                    Write-Host "✅ Overwritten: $($File.Name)"
-                } elseif ($Response -eq "No") {
-                    $NewName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name) + "_Copy" + [System.IO.Path]::GetExtension($File.Name)
-                    $NewDestinationPath = Join-Path $DestinationFolder $NewName
-                    Move-Item -Path $File.FullName -Destination $NewDestinationPath -Force -ErrorAction Stop
-                    Write-Host "✅ Renamed and moved: $($File.Name) → $NewDestinationPath"
-                } else {
-                    Write-Host "⚠ Skipping file: $($File.Name)"
-                    continue
-                }
-            } else {
-                try {
-                    Move-Item -Path $File.FullName -Destination $DestinationPath -Force -ErrorAction Stop
-                    Write-Host "✅ Moved: $($File.Name) → $DestinationPath"
-                }
-                catch {
-                    Write-Host "❌ Error moving file '$($File.Name)': $($_.Exception.Message)"
-                }
-            }
-        }
-
-        # Confirm success
-        [System.Windows.Forms.MessageBox]::Show("All exported PDFs have been successfully moved to:`n$DestinationFolder", "Move Completed", "OK", "Information")
-        Log-Message "✅ All exported files successfully moved."
-    } else {
-        Write-Host "⚠ User canceled file movement."
-        Log-Message "⚠ User canceled file movement."
-    }
-}
+# === SECTION 7:  GUI === #
 
 # === GUI Form Setup (Modern Windows 11 Look) ===
 $Form = New-Object System.Windows.Forms.Form
@@ -757,6 +684,8 @@ function Enable-AutoComplete {
         }
     }
 }
+
+# === SECTION 8: BUTTONS === 
 
 # Call function on form load to populate suggestions
 Enable-AutoComplete
@@ -946,6 +875,8 @@ $BtnMassInput.Add_Click({
 
 # === Initialize GUI and Populate PDF List Before Displaying ===
 Refresh-PDFList  # Call function to ensure the PDF list is preloaded
+
+# === SECTION 9: START PROCESS =====================================================
 
 function Validate-Inputs {
     $Global:ValidRows = 0
@@ -1684,8 +1615,6 @@ $BtnStart.Add_Click({
     # Stop logging
     Stop-Logging
 })
-
-
 
 function Format-PageRange {
     param ([string]$PageRange)
