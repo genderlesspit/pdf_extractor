@@ -1558,12 +1558,42 @@ $BtnStart.Add_Click({
         }
 
         if (-not (Validate-PageRangeWithinPDF -PDFPath (Join-Path $MasterPDFDir $PDFFileName) -PageRanges $PageRanges -RowIndex $RowIndex)) {
+            # Get the total number of pages in the PDF
+            $TotalPages = Get-PDFPageCount -PDFPath (Join-Path $MasterPDFDir $PDFFileName)
+            
+            # Extract the invalid page ranges
+            $InvalidPages = @()
+            $PageGroups = $PageRanges -split ","
+        
+            foreach ($Range in $PageGroups) {
+                if ($Range -match "^\d+-\d+$") {  # Range format (e.g., 5-10)
+                    $Start, $End = $Range -split "-"
+                    if ([int]$Start -gt $TotalPages -or [int]$End -gt $TotalPages) {
+                        $InvalidPages += $Range
+                    }
+                } elseif ($Range -match "^\d+$") {  # Single page (e.g., 15)
+                    if ([int]$Range -gt $TotalPages) {
+                        $InvalidPages += $Range
+                    }
+                }
+            }
+        
+            # Generate an error message listing invalid pages
+            $ErrorMessage = "🚨 Page range exceeds total pages in PDF.`n" +
+                            "📄 PDF: $PDFFileName (Total Pages: $TotalPages)`n" +
+                            "❌ Invalid Page(s) in Row $RowIndex: " + ($InvalidPages -join ", ")
+        
             [System.Windows.Forms.MessageBox]::Show(
-                "One or more page ranges exceed the total pages in the PDF.",
-                "Page Range Error", "OK", "Error"
+                $ErrorMessage,
+                "Page Range Error",
+                "OK",
+                "Error"
             )
+        
+            Write-Host $ErrorMessage
             return
         }
+
     }
 
     if ($ValidRows -eq 0) {
