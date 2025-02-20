@@ -160,5 +160,55 @@ function Enable-AutoComplete {
     Write-Host "✅ Auto-complete enabled with $($MasterPDFs.Count) PDFs."
 }
 
+function Update-GridFromCSV {
+    $CSVPath = "$ProgramDir\\temp_grid_update.csv"
+
+    if (!(Test-Path $CSVPath)) {
+        Write-Host "⚠ No new grid data found."
+        return
+    }
+
+    try {
+        $CSVData = Import-Csv -Path $CSVPath -Encoding UTF8
+
+        # Clear existing grid
+        $DataTable.Clear()
+
+        foreach ($Row in $CSVData) {
+            $NewRow = $DataTable.NewRow()
+            $NewRow["Master PDF"] = $Row."Column1"
+            $NewRow["Output Name"] = $Row."Column2"
+            $NewRow["Page Range"] = $Row."Column3"
+            $DataTable.Rows.Add($NewRow)
+        }
+
+        # Clear the temp CSV file
+        Remove-Item $CSVPath -Force
+
+        Write-Host "✅ Grid updated with new entries."
+    } catch {
+        Write-Host "❌ Error updating grid: $_"
+    }
+}
+
+# Modify the buttons to call the unified script with arguments
+$BtnMassMasterPDFs.Add_Click({
+    Run-PythonScript -ScriptName "mass_input.py master_pdf"
+    Start-Sleep -Seconds 1
+    Update-GridFromCSV
+})
+
+$BtnMassInput.Add_Click({
+    Run-PythonScript -ScriptName "mass_input.py output_name"
+    Start-Sleep -Seconds 1
+    Update-GridFromCSV
+})
+
+$BtnPageRange.Add_Click({
+    Run-PythonScript -ScriptName "mass_input.py page_range"
+    Start-Sleep -Seconds 1
+    Update-GridFromCSV
+})
+
 # === Show GUI ===
 $Form.ShowDialog()
