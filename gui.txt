@@ -1,0 +1,145 @@
+# === Load Required Assemblies ===
+if (-not ("System.Windows.Forms.Form" -as [Type])) { 
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+    }
+    catch {
+        $ErrorMessage = "❌ ERROR: Failed to load System.Windows.Forms. GUI elements may not work."
+        Write-Host $ErrorMessage -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Critical Error", "OK", "Error")
+    }
+}
+
+if (-not ("System.Drawing.Graphics" -as [Type])) { 
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    }
+    catch {
+        $ErrorMessage = "❌ ERROR: Failed to load System.Drawing. Some graphical features may not work."
+        Write-Host $ErrorMessage -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Critical Error", "OK", "Error")
+    }
+}
+
+# === PowerShell Version Check ===
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    Write-Host "⚠ WARNING: This script is designed for Windows PowerShell 5.1. Some features may not work in PowerShell Core 7.x or later." -ForegroundColor Yellow
+    [System.Windows.Forms.MessageBox]::Show("This script is designed for Windows PowerShell 5.1. Some features may not work in PowerShell Core 7.x or later.", "Compatibility Warning", "OK", "Warning")
+}
+
+# === GUI Form Setup (Modern Windows 11 Look) ===
+$Form = New-Object System.Windows.Forms.Form
+$Form.Text = "PDF Extractor"
+$Form.Size = New-Object System.Drawing.Size(1300, 650)  # Adjusted to fit everything
+$Form.StartPosition = "CenterScreen"
+$Form.BackColor = [System.Drawing.Color]::FromArgb(245, 245, 245)  # Soft Gray Windows 11 Look
+$Form.FormBorderStyle = "FixedDialog"  # Prevent resizing
+
+# Use Windows 11 Font
+$Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Regular)
+
+# === DataGridView (Fixed Size & Centered) ===
+$DataGridView = New-Object System.Windows.Forms.DataGridView
+$DataGridView.Location = New-Object System.Drawing.Point(20, 20)  
+$DataGridView.Size = New-Object System.Drawing.Size(1160, 450)  # Fixed size
+$DataGridView.AutoSizeColumnsMode = "Fill"
+$DataGridView.AllowUserToAddRows = $true
+$DataGridView.BorderStyle = "None"
+$DataGridView.BackgroundColor = [System.Drawing.Color]::WhiteSmoke
+$DataGridView.Font = $Font
+
+# Add DataGridView to the form
+$Form.Controls.Add($DataGridView)
+
+# === Adjust Button Layout (Proper Spacing & Centering) ===
+$ButtonWidth = 170  
+$ButtonHeight = 40  
+$Spacing = 10  # Reduced spacing for better alignment
+$TotalButtons = 7  # Includes "Clear Grid"
+$TotalWidth = ($ButtonWidth * $TotalButtons) + ($Spacing * ($TotalButtons - 1))  
+$StartX = [Math]::Max(20, ($Form.ClientSize.Width - $TotalWidth) / 2)  
+$StartY = 520  # Positioned closer to the grid
+
+function Create-RoundedButton($text, $x, $y, $clickEvent) {
+    $Button = New-Object System.Windows.Forms.Button
+    $Button.Text = $text
+    $Button.Size = New-Object System.Drawing.Size($ButtonWidth, $ButtonHeight)
+    $Button.Location = New-Object System.Drawing.Point($x, $y)
+    $Button.BackColor = [System.Drawing.Color]::FromArgb(220, 220, 220)  
+    $Button.FlatStyle = "Flat"
+    $Button.FlatAppearance.BorderSize = 1
+    $Button.Font = $Font
+    $Button.Add_Click($clickEvent)
+    return $Button
+}
+
+# === Create & Add Buttons with Corrected Spacing ===
+$BtnUploadPDF = Create-RoundedButton "Upload PDF" $StartX $StartY {}
+$Form.Controls.Add($BtnUploadPDF)
+
+$BtnMassMasterPDFs = Create-RoundedButton "Mass Input Master PDFs" ($StartX + ($ButtonWidth + $Spacing) * 1) $StartY {}
+$Form.Controls.Add($BtnMassMasterPDFs)
+
+$BtnMassInput = Create-RoundedButton "Mass Input Output Name" ($StartX + ($ButtonWidth + $Spacing) * 2) $StartY {}
+$Form.Controls.Add($BtnMassInput)
+
+$BtnPageRange = Create-RoundedButton "Mass Input Page Range" ($StartX + ($ButtonWidth + $Spacing) * 3) $StartY {}
+$Form.Controls.Add($BtnPageRange)
+
+$BtnStart = Create-RoundedButton "Start" ($StartX + ($ButtonWidth + $Spacing) * 4) $StartY {}
+$Form.Controls.Add($BtnStart)
+
+$BtnRetry = Create-RoundedButton "Retry Failed" ($StartX + ($ButtonWidth + $Spacing) * 5) $StartY {}
+$Form.Controls.Add($BtnRetry)
+
+# === Clear Grid Button (Final Button) ===
+$BtnClearGrid = Create-RoundedButton "Clear Grid" ($StartX + ($ButtonWidth + $Spacing) * 6) $StartY {
+    $Confirm = [System.Windows.Forms.MessageBox]::Show("Are you sure you want to clear all data?", "Clear Grid", "YesNo", "Warning")
+
+    if ($Confirm -eq "Yes") {
+        $DataTable.Clear()  
+        Write-Host "🔄 Grid cleared successfully."
+    }
+}
+$Form.Controls.Add($BtnClearGrid)
+
+# === Create DataTable (Remove Dropdown, Keep Text Input for Master PDF) ===
+$DataTable = New-Object System.Data.DataTable
+$DataTable.Columns.Add("Master PDF", [string]) | Out-Null  
+$DataTable.Columns.Add("Output Name") | Out-Null
+$DataTable.Columns.Add("Page Range") | Out-Null
+$DataGridView.DataSource = $DataTable
+
+function Enable-AutoComplete {
+    # Ensure the Master PDF directory exists
+    if (!(Test-Path $MasterPDFDir)) {
+        Write-Host "⚠ Warning: Master PDF directory not found: $MasterPDFDir"
+        return
+    }
+
+    # Get available PDF files
+    $MasterPDFs = Get-ChildItem -Path $MasterPDFDir -Filter "*.pdf" | Select-Object -ExpandProperty Name
+
+    # Ensure the list is not empty before calling .AddRange()
+    if ($MasterPDFs.Count -eq 0) {
+        Write-Host "⚠ No PDFs found in $MasterPDFDir. Auto-complete will be empty."
+        return
+    }
+
+    foreach ($Row in $DataGridView.Rows) {
+        if ($Row.Cells["Master PDF"] -is [System.Windows.Forms.DataGridViewTextBoxCell]) {
+            $AutoComplete = New-Object System.Windows.Forms.AutoCompleteStringCollection
+            $AutoComplete.AddRange($MasterPDFs)  # 🛠️ Safe usage after checking for null/empty
+
+            $TextBox = New-Object System.Windows.Forms.TextBox
+            $TextBox.AutoCompleteMode = "SuggestAppend"
+            $TextBox.AutoCompleteSource = "CustomSource"
+            $TextBox.AutoCompleteCustomSource = $AutoComplete
+
+            # Attach the textbox to the cell for auto-completion
+            $Row.Cells["Master PDF"].Tag = $TextBox
+        }
+    }
+
+    Write-Host "✅ Auto-complete enabled with $($MasterPDFs.Count) PDFs."
+}
