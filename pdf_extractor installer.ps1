@@ -7,6 +7,7 @@ $LogFolder = "$UserPythonFolder\\logs"
 $LogFile = "$LogFolder\\python_install_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 $PythonExe = "$UserPythonFolder\\python.exe"
 $PipInstallerPath = "$env:TEMP\\get-pip.py"
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 # === Define Modular Dependencies ===
 $DefaultDependencies = @("pypdf", "pdf2image", "pillow")  # Default set of dependencies
@@ -65,6 +66,17 @@ if ($PipCheck -match "pip") {
         & "$PythonExe" $PipInstallerPath --no-cache-dir
         Log-Message "pip installed successfully."
     } catch { Log-Message "Error installing pip: $_"; exit }
+}
+
+# === Ensure pip recognizes the user directory for installation ===
+[System.Environment]::SetEnvironmentVariable("PYTHONUSERBASE", "$UserPythonFolder", "User")
+
+# Verify pip is working in user mode
+$PipUserCheck = & "$PythonExe" -m site --user-site 2>&1
+if ($PipUserCheck -match "$UserPythonFolder") {
+    Log-Message "✅ pip is now set to install packages in the user directory: $PipUserCheck"
+} else {
+    Log-Message "⚠ pip user directory not recognized. Forcing target install mode."
 }
 
 # === Step 4: Install Required Dependencies ===
@@ -160,7 +172,7 @@ if (Test-Path $ConfigPath) {
 
 # === Define User-Writable Directory ===
 $DependenciesDir = Join-Path $ProgramDir "dependencies"
-$GitHubTarUrl = "https://github.com/genderlesspit/pdf_extractor/archive/refs/tags/test.tar.gz"
+$GitHubTarUrl = "https://github.com/genderlesspit/pdf_extractor/archive/refs/tags/testtwo.tar.gz"
 $TarFilePath = Join-Path $DependenciesDir "test.tar.gz"
 
 # Ensure dependencies directory exists
@@ -225,41 +237,109 @@ if (Test-Path $ExtractPath) {
     exit
 }
 
-# === Check if pip is Working Properly ===
-Log-Message "🔍 Checking if pip is working..."
-$PipCheck = & "$PythonExe" -m pip --version 2>&1
+# === Fix Broken pip Installation ===
+function Fix-Pip {
+    Log-Message "Checking if pip is working..."
+    $PipCheck = & "$PythonExe" -m pip --version 2>&1
 
-if ($PipCheck -match "pip") {
-    Log-Message "✅ pip is installed: $PipCheck"
-} else {
-    Log-Message "❌ pip is broken or missing. Reinstalling..."
-    
-    try {
-        # Download pip installer
-        Log-Message "📥 Downloading get-pip.py..."
-        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $PipInstallerPath -ErrorAction Stop
+    if ($PipCheck -match "pip") {
+        Log-Message "pip is installed: $PipCheck"
+    } else {
+        Log-Message "pip is broken or missing. Attempting full reinstall..."
 
-        # Reinstall pip
-        Log-Message "🔄 Reinstalling pip..."
-        & "$PythonExe" $PipInstallerPath --no-cache-dir --target="$DependenciesDir"
-        Log-Message "✅ pip reinstalled successfully."
-    } catch { 
-        Log-Message "❌ Error reinstalling pip: $_"
+        try {
+            # Remove broken pip installation
+            Remove-Item -Recurse -Force "$UserPythonFolder\Lib\site-packages\pip" -ErrorAction SilentlyContinue
+            Remove-Item -Recurse -Force "$UserPythonFolder\Scripts\pip*" -ErrorAction SilentlyContinue
+
+            # Download and reinstall pip
+            Log-Message "Downloading get-pip.py..."
+            Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $PipInstallerPath -ErrorAction Stop
+
+            # Reinstall pip properly
+            Log-Message "Reinstalling pip..."
+            & "$PythonExe" $PipInstallerPath --no-cache-dir --target="$DependenciesDir"
+
+            # Verify pip installation
+            $PipCheckNew = & "$PythonExe" -m pip --version 2>&1
+            if ($PipCheckNew -match "pip") {
+                Log-Message "pip reinstalled successfully: $PipCheckNew"
+            } else {
+                Log-Message "pip reinstall failed."
+                exit
+            }
+        } catch { 
+            Log-Message "Error reinstalling pip: $_"
+            exit
+        }
+    }
+
+    # Locate pip's vendor directory
+    $PipVendorDir = & "$PythonExe" -c "import os, pip; print(os.path.join(os.path.dirname(pip.__file__), '_vendor'))" 2>&1
+    if (!(Test-Path $PipVendorDir)) {
+        Log-Message "Could not find pip vendor directory. Exiting."
         exit
+    }
+    Log-Message "pip vendor directory: $PipVendorDir"
+
+    # Ensure `rich` is installed inside the correct pip vendor directory
+    Log-Message "Installing `rich` inside pip's vendor directory..."
+    $RichInstall = & "$PythonExe" -m pip install --no-cache-dir --target="$PipVendorDir" rich 2>&1
+
+    if ($RichInstall -match "Successfully installed") {
+        Log-Message "rich installed successfully inside pip vendor directory."
+    } else {
+        Log-Message "Failed to install `rich`: $RichInstall"
+        exit
+    }
+
+# Ensure `_vendor` is in Python's `sys.path` before running setup.py
+Log-Message "Adding `_vendor` to Python's `sys.path`..."
+$VendorPathFix = & "$PythonExe" -c @'
+import sys
+import os
+import pip
+import subprocess
+
+vendor_path = os.path.join(os.path.dirname(pip.__file__), "_vendor")
+if vendor_path not in sys.path:
+    sys.path.insert(0, vendor_path)
+    print(f"Added vendor path to sys.path: {vendor_path}")
+else:
+    print(f"Vendor path already recognized: {vendor_path}")
+
+# Check if `rich` exists
+rich_path = os.path.join(vendor_path, "rich")
+if os.path.exists(rich_path):
+    print(f"rich module found at: {rich_path}")
+else:
+    print(f"rich module NOT FOUND at expected location: {rich_path}")
+    print("Reinstalling `rich` inside vendor directory...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "--target", vendor_path, "rich"], check=True)
+
+# Check if `rich.markdown` exists
+markdown_path = os.path.join(rich_path, "markdown.py")
+if os.path.exists(markdown_path):
+    print(f"rich.markdown module found at: {markdown_path}")
+else:
+    print(f"rich.markdown module NOT FOUND. Manual intervention required.")
+'@ 2>&1
+
+Log-Message "$VendorPathFix"
+
+    # Ensure pip is updated
+    Log-Message "Updating pip, setuptools, and wheel..."
+    $PipUpgrade = & "$PythonExe" -m pip install --upgrade --no-cache-dir --target="$DependenciesDir" pip setuptools wheel 2>&1
+
+    if ($PipUpgrade -match "Successfully installed") {
+        Log-Message "pip and dependencies updated successfully."
+    } else {
+        Log-Message "pip was already up to date or update failed: $PipUpgrade"
     }
 }
 
-# === Ensure pip is Up to Date ===
-Log-Message "🔄 Updating pip..."
-$PipUpgrade = & "$PythonExe" -m pip install --upgrade --no-cache-dir --target="$DependenciesDir" pip 2>&1
-
-if ($PipUpgrade -match "Successfully installed") {
-    Log-Message "✅ pip updated successfully."
-} else {
-    Log-Message "⚠ pip was already up to date or update failed: $PipUpgrade"
-}
-
-Log-Message "✅ pip check and fix process completed."
+# Call the Fix-Pip function before proceeding
+Fix-Pip
 
 # === Execute `setup.py` ===
 Write-Host "🚀 Running setup.py..."
