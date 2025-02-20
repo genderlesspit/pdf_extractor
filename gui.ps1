@@ -2,43 +2,12 @@
 if (-not ("System.Windows.Forms.Form" -as [Type])) { Add-Type -AssemblyName System.Windows.Forms }
 if (-not ("System.Drawing.Graphics" -as [Type])) { Add-Type -AssemblyName System.Drawing }
 
-# === PowerShell Version Check ===
-if ($PSVersionTable.PSVersion.Major -ge 7) {
-    Write-Host "⚠ WARNING: This script is designed for Windows PowerShell 5.1. Some features may not work in PowerShell Core 7.x or later." -ForegroundColor Yellow
-    [System.Windows.Forms.MessageBox]::Show("This script is designed for Windows PowerShell 5.1. Some features may not work in PowerShell Core 7.x or later.", "Compatibility Warning", "OK", "Warning")
-    exit
-}
+# === Define Directories ===
+$ProgramDir = Join-Path ([System.Environment]::GetFolderPath("MyDocuments")) "PDF_Extractor"
+$ScriptsDir = Join-Path $ProgramDir "dependencies\scripts"
+$PythonExe = "$ProgramDir\dependencies\python.exe"
 
-### === Define Directories Properly ===
-$FallbackDir = "C:\PDF_Extractor"
-
-try {
-    $UserDocuments = [System.Environment]::GetFolderPath("MyDocuments")
-    if ([string]::IsNullOrWhiteSpace($UserDocuments)) {
-        throw "Unable to determine user 'Documents' folder."
-    }
-} catch {
-    Write-Host "⚠ Warning: Failed to fetch 'Documents' directory. Using fallback location: $FallbackDir"
-    $UserDocuments = $FallbackDir
-}
-
-# Allow custom base directory from config.txt
-$ProgramDir = Join-Path $UserDocuments "PDF_Extractor"
-$MasterPDFDir = Join-Path $ProgramDir "Master_PDFs"
-$ExportsDir = Join-Path $ProgramDir "Exports"
-$LogDir = Join-Path $ProgramDir "Logs"
-$DependenciesDir = Join-Path $ProgramDir "dependencies"
-$ScriptsDir = Join-Path $DependenciesDir "scripts"
-$PythonExe = "$UserPythonFolder\\python.exe"
-
-# === Ensure Python Exists ===
-if (!(Test-Path $PythonExe)) {
-    Write-Host "❌ Python not found in dependencies. Please install Python first."
-    [System.Windows.Forms.MessageBox]::Show("Python not found in dependencies. Please install Python first.", "Error", "OK", "Error")
-    exit
-}
-
-# === Function to Execute Python Scripts ===
+# === Function to Run Python Scripts ===
 function Run-PythonScript {
     param ([string]$ScriptName)
     $ScriptPath = Join-Path $ScriptsDir $ScriptName
@@ -61,7 +30,7 @@ $Form.StartPosition = "CenterScreen"
 $Form.BackColor = [System.Drawing.Color]::FromArgb(245, 245, 245)
 $Form.FormBorderStyle = "FixedDialog"
 
-# === Define Font ===
+# === Font Style ===
 $Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Regular)
 
 # === DataGridView Setup ===
@@ -75,7 +44,7 @@ $DataGridView.BackgroundColor = [System.Drawing.Color]::WhiteSmoke
 $DataGridView.Font = $Font
 $Form.Controls.Add($DataGridView)
 
-# === Adjust Button Layout ===
+# === Define Button Layout ===
 $ButtonWidth = 170
 $ButtonHeight = 40
 $Spacing = 10
@@ -95,120 +64,84 @@ function Create-RoundedButton {
     $Button.FlatStyle = "Flat"
     $Button.FlatAppearance.BorderSize = 1
     $Button.Font = $Font
-    $Button.Add_Click({ Run-PythonScript -ScriptName $PythonScript })
+    if ($PythonScript -ne "") {
+        $Button.Add_Click({ Run-PythonScript -ScriptName $PythonScript })
+    }
     return $Button
 }
 
-# === Create Buttons ===
+# === Add Buttons ===
 $BtnUploadPDF = Create-RoundedButton "Upload PDF" $StartX $StartY "upload_pdf.py"
 $Form.Controls.Add($BtnUploadPDF)
 
-$BtnMassMasterPDFs = Create-RoundedButton "Mass Input Master PDFs" ($StartX + ($ButtonWidth + $Spacing) * 1) $StartY "mass_input_master_pdfs.py"
+$BtnMassMasterPDFs = Create-RoundedButton "Mass Input Master PDFs" ($StartX + ($ButtonWidth + $Spacing) * 1) $StartY "mass_input.py master_pdf"
 $Form.Controls.Add($BtnMassMasterPDFs)
 
-$BtnMassInput = Create-RoundedButton "Mass Input Output Name" ($StartX + ($ButtonWidth + $Spacing) * 2) $StartY "mass_input_output.py"
+$BtnMassInput = Create-RoundedButton "Mass Input Output Name" ($StartX + ($ButtonWidth + $Spacing) * 2) $StartY "mass_input.py output_name"
 $Form.Controls.Add($BtnMassInput)
 
-$BtnPageRange = Create-RoundedButton "Mass Input Page Range" ($StartX + ($ButtonWidth + $Spacing) * 3) $StartY "mass_input_page_range.py"
+$BtnPageRange = Create-RoundedButton "Mass Input Page Range" ($StartX + ($ButtonWidth + $Spacing) * 3) $StartY "mass_input.py page_range"
 $Form.Controls.Add($BtnPageRange)
 
-$BtnStart = Create-RoundedButton "Start" ($StartX + ($ButtonWidth + $Spacing) * 4) $StartY "start_process.py"
+$BtnStart = Create-RoundedButton "Start Process" ($StartX + ($ButtonWidth + $Spacing) * 4) $StartY "validate_inputs.py"
+$BtnStart.Add_Click({
+    Run-PythonScript -ScriptName "validate_inputs.py"
+    Start-Sleep -Seconds 1
+
+    if (Read-ErrorsFromJSON) {
+        Run-PythonScript -ScriptName "process_extraction.py"
+        Start-Sleep -Seconds 1
+        Run-PythonScript -ScriptName "export.py"
+    }
+})
 $Form.Controls.Add($BtnStart)
 
-$BtnRetry = Create-RoundedButton "Retry Failed" ($StartX + ($ButtonWidth + $Spacing) * 5) $StartY "retry_failed.py"
-$Form.Controls.Add($BtnRetry)
+$BtnSaveLoadGrid = Create-RoundedButton "Save/Load DataGrid" ($StartX + ($ButtonWidth + $Spacing) * 5) $StartY ""
+$BtnSaveLoadGrid.Add_Click({
+    $Choice = [System.Windows.Forms.MessageBox]::Show("Do you want to save or load the grid?", "Save or Load", "YesNoCancel", "Question")
+    if ($Choice -eq "Yes") {
+        Run-PythonScript -ScriptName "save_load_grid.py"
+    } elseif ($Choice -eq "No") {
+        Run-PythonScript -ScriptName "save_load_grid.py load"
+    }
+})
+$Form.Controls.Add($BtnSaveLoadGrid)
 
 $BtnClearGrid = Create-RoundedButton "Clear Grid" ($StartX + ($ButtonWidth + $Spacing) * 6) $StartY "clear_grid.py"
 $Form.Controls.Add($BtnClearGrid)
 
-# === Create DataTable ===
+# === Define DataTable for GridView ===
 $DataTable = New-Object System.Data.DataTable
 $DataTable.Columns.Add("Master PDF", [string]) | Out-Null
 $DataTable.Columns.Add("Output Name") | Out-Null
 $DataTable.Columns.Add("Page Range") | Out-Null
 $DataGridView.DataSource = $DataTable
 
-# === Enable Auto-Complete for PDFs ===
-function Enable-AutoComplete {
-    $MasterPDFDir = Join-Path $ProgramDir "Master_PDFs"
+# === Function to Read Error Logs ===
+function Read-ErrorsFromJSON {
+    $ErrorFile = "$ProgramDir\\errors.json"
 
-    if (!(Test-Path $MasterPDFDir)) {
-        Write-Host "⚠ Warning: Master PDF directory not found: $MasterPDFDir"
-        return
-    }
-
-    $MasterPDFs = Get-ChildItem -Path $MasterPDFDir -Filter "*.pdf" | Select-Object -ExpandProperty Name
-    if ($MasterPDFs.Count -eq 0) {
-        Write-Host "⚠ No PDFs found in $MasterPDFDir. Auto-complete will be empty."
-        return
-    }
-
-    foreach ($Row in $DataGridView.Rows) {
-        if ($Row.Cells["Master PDF"] -is [System.Windows.Forms.DataGridViewTextBoxCell]) {
-            $AutoComplete = New-Object System.Windows.Forms.AutoCompleteStringCollection
-            $AutoComplete.AddRange($MasterPDFs)
-
-            $TextBox = New-Object System.Windows.Forms.TextBox
-            $TextBox.AutoCompleteMode = "SuggestAppend"
-            $TextBox.AutoCompleteSource = "CustomSource"
-            $TextBox.AutoCompleteCustomSource = $AutoComplete
-
-            $Row.Cells["Master PDF"].Tag = $TextBox
-        }
-    }
-
-    Write-Host "✅ Auto-complete enabled with $($MasterPDFs.Count) PDFs."
-}
-
-function Update-GridFromCSV {
-    $CSVPath = "$ProgramDir\\temp_grid_update.csv"
-
-    if (!(Test-Path $CSVPath)) {
-        Write-Host "⚠ No new grid data found."
-        return
+    if (!(Test-Path $ErrorFile)) {
+        return $null
     }
 
     try {
-        $CSVData = Import-Csv -Path $CSVPath -Encoding UTF8
+        $Errors = Get-Content -Raw -Path $ErrorFile | ConvertFrom-Json
+        if ($Errors.missing_pdfs.Count -gt 0 -or $Errors.invalid_page_ranges.Count -gt 0 -or $Errors.empty_fields.Count -gt 0 -or $Errors.unreadable_pdfs.Count -gt 0) {
+            $ErrorMessage = "🚨 Validation Errors:`n`n"
+            if ($Errors.missing_pdfs.Count -gt 0) { $ErrorMessage += "❌ Missing PDFs:`n" + ($Errors.missing_pdfs -join "`n") + "`n`n" }
+            if ($Errors.invalid_page_ranges.Count -gt 0) { $ErrorMessage += "⚠ Invalid Page Ranges:`n" + ($Errors.invalid_page_ranges -join "`n") + "`n`n" }
+            if ($Errors.empty_fields.Count -gt 0) { $ErrorMessage += "❌ Missing Fields:`n" + ($Errors.empty_fields -join "`n") + "`n`n" }
 
-        # Clear existing grid
-        $DataTable.Clear()
-
-        foreach ($Row in $CSVData) {
-            $NewRow = $DataTable.NewRow()
-            $NewRow["Master PDF"] = $Row."Column1"
-            $NewRow["Output Name"] = $Row."Column2"
-            $NewRow["Page Range"] = $Row."Column3"
-            $DataTable.Rows.Add($NewRow)
+            [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Validation Errors", "OK", "Error")
+            return $false
         }
-
-        # Clear the temp CSV file
-        Remove-Item $CSVPath -Force
-
-        Write-Host "✅ Grid updated with new entries."
     } catch {
-        Write-Host "❌ Error updating grid: $_"
+        Write-Host "❌ Error reading validation logs."
     }
+
+    return $true
 }
 
-# Modify the buttons to call the unified script with arguments
-$BtnMassMasterPDFs.Add_Click({
-    Run-PythonScript -ScriptName "mass_input.py master_pdf"
-    Start-Sleep -Seconds 1
-    Update-GridFromCSV
-})
-
-$BtnMassInput.Add_Click({
-    Run-PythonScript -ScriptName "mass_input.py output_name"
-    Start-Sleep -Seconds 1
-    Update-GridFromCSV
-})
-
-$BtnPageRange.Add_Click({
-    Run-PythonScript -ScriptName "mass_input.py page_range"
-    Start-Sleep -Seconds 1
-    Update-GridFromCSV
-})
-
-# === Show GUI ===
+# === Display GUI ===
 $Form.ShowDialog()
