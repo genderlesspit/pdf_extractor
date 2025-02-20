@@ -12,6 +12,7 @@ dependencies_dir = os.path.join(base_dir, "dependencies")
 scripts_dir = os.path.join(dependencies_dir, "scripts")
 exe_output_dir = os.path.join(base_dir, "dist")
 zip_file_path = os.path.join(base_dir, "pdf_extractor_latest.zip")
+gui_script_path = os.path.join(scripts_dir, "gui.ps1")
 
 os.makedirs(scripts_dir, exist_ok=True)
 
@@ -68,7 +69,7 @@ def extract_release():
 # Install dependencies
 def install_dependencies():
     """Ensure required dependencies are installed."""
-    required_packages = ["pyinstaller", "pymupdf", "requests", "pywin32", "winshell"]
+    required_packages = ["pyinstaller", "requests", "winshell", "pywin32"]
 
     for package in required_packages:
         try:
@@ -77,17 +78,19 @@ def install_dependencies():
         except subprocess.CalledProcessError:
             print(f"❌ Failed to install: {package}")
 
-# Create standalone executable
+# Create standalone executable to launch gui.ps1
 def create_executable():
-    """Use PyInstaller to package the application into an .exe file."""
+    """Uses PyInstaller to create a .exe that runs the PowerShell GUI script."""
     os.makedirs(exe_output_dir, exist_ok=True)
 
-    exe_script = os.path.join(scripts_dir, "process_extraction.py")
+    launcher_script = os.path.join(scripts_dir, "launcher.py")
     exe_name = "PDF_Extractor"
 
-    if not os.path.exists(exe_script):
-        print(f"❌ Error: {exe_script} not found!")
-        return
+    # Create a Python script to launch gui.ps1 via PowerShell
+    with open(launcher_script, "w", encoding="utf-8") as file:
+        file.write(f"""import subprocess
+subprocess.run(["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", r"{gui_script_path}"])
+""")
 
     print("🚀 Creating standalone executable...")
     try:
@@ -96,7 +99,7 @@ def create_executable():
             "--onefile",
             "--distpath", exe_output_dir,
             "--name", exe_name,
-            exe_script
+            launcher_script
         ], check=True)
         print(f"✅ Executable created: {os.path.join(exe_output_dir, exe_name)}.exe")
     except subprocess.CalledProcessError:
@@ -117,7 +120,7 @@ def create_shortcut():
         shortcut = shell.CreateShortcut(shortcut_path)
         shortcut.TargetPath = exe_path
         shortcut.WorkingDirectory = exe_output_dir
-        shortcut.Description = "PDF Extractor Application"
+        shortcut.Description = "PDF Extractor GUI"
         shortcut.IconLocation = exe_path  # Uses the exe icon
         shortcut.Save()
         print(f"✅ Desktop shortcut created: {shortcut_path}")
