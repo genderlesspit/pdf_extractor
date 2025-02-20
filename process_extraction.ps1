@@ -52,31 +52,33 @@ function Retry-FailedExtractions {
     try {
         $FailedExtractions = Get-Content -Raw -Path $FailureLogFile | ConvertFrom-Json
     } catch {
-        Write-Host "⚠ Error reading $FailureLogFile. Skipping retries."
+        Write-Host "⚠ Error reading `${FailureLogFile}`. Skipping retries."
         return
     }
 
     if ($FailedExtractions.Count -eq 0) { return }
 
-    Write-Host "🔄 Retrying failed extractions..."
+    Write-Host "Retrying failed extractions..."
 
     $NewFailedExtractions = @{}
 
     foreach ($Key in $FailedExtractions.Keys) {
         $Attempts = $FailedExtractions[$Key]
         $Parts = $Key -split "\|"
-        $PDFName, $OutputName, $PageRanges = $Parts
+        $PDFName = $Parts[0]
+        $OutputName = $Parts[1]
+        $PageRanges = $Parts[2]
 
-        Write-Host "🔁 Attempting retry ($Attempts/$MAX_RETRIES) for: $OutputName"
+        Write-Host "Retrying extraction ($Attempts/$MAX_RETRIES) for: `${OutputName}`"
 
         $Success = Extract-PDFPages -PDFName $PDFName -PageRanges $PageRanges -OutputName $OutputName
 
         if (!$Success -and $Attempts -lt $MAX_RETRIES) {
             $NewFailedExtractions[$Key] = $Attempts + 1
         } elseif ($Success) {
-            Write-Host "✅ Successfully retried: $OutputName"
+            Write-Host "✅ Successfully retried: `${OutputName}`"
         } else {
-            Write-Host "❌ Max retries reached for: $OutputName"
+            Write-Host "❌ Max retries reached for: `${OutputName}`"
         }
     }
 
