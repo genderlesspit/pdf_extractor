@@ -99,7 +99,7 @@ if ($MissingPackages -eq "") {
 
 Log-Message "Python setup completed."
 
-# === Define Base Directory Correctly ===
+# === Define Base Directory ===
 $ProgramDir = [System.Environment]::GetFolderPath("MyDocuments")
 if (-not $ProgramDir) { $ProgramDir = "C:\PDF_Extractor" }
 
@@ -183,3 +183,4 @@ if (Test-Path $PythonExe) {
 } else {
     Write-Host "❌ Python not found. Please install Python and try again."
 }
+
