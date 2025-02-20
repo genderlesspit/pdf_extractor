@@ -91,13 +91,9 @@ if (!(Test-Path $GUIPath)) {
     exit 1
 }
 
-Write-Host "🚀 Running GUI from: $GUIPath"
+Write-Host "🚀 Running GUI from: $GUIPath as a background job"
 
-# Run GUI.ps1 within the current session (dot sourcing to avoid process termination)
-try {
-    . "$GUIPath"
-} catch {
-    Write-Host "❌ Failed to launch GUI: $($_.Exception.Message)"
-    [System.Windows.Forms.MessageBox]::Show("Failed to launch GUI: $($_.Exception.Message)", "Error", "OK", "Error")
-    exit 1
+# Start GUI as a background job
+Start-Job -ScriptBlock {
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$using:GUIPath`""
 }
