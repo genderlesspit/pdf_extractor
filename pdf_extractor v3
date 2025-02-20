@@ -91,7 +91,7 @@ if ($MissingPackages -eq "") {
             if ($InstallOutput -match "Successfully installed") {
                 Log-Message "Successfully installed $Package."
             } else {
-                Log-Message "Error installing $Package: $InstallOutput"
+                Log-Message "Error installing ${Package}: $InstallOutput"
             }
         }
     }
@@ -99,25 +99,87 @@ if ($MissingPackages -eq "") {
 
 Log-Message "Python setup completed."
 
+# === Define Base Directory Correctly ===
+$ProgramDir = [System.Environment]::GetFolderPath("MyDocuments")
+if (-not $ProgramDir) { $ProgramDir = "C:\PDF_Extractor" }
 
-# === Actual Script
+$ConfigPath = ".\config.txt"
 
-# === Load Required Assemblies ===
-if (-not ("System.Windows.Forms.Form" -as [Type])) { 
-    try { Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop }
-    catch {
-        $ErrorMessage = "ERROR: Failed to load System.Windows.Forms."
-        Write-Host $ErrorMessage -ForegroundColor Red
-        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Critical Error", "OK", "Error")
-    }
-}
-if (-not ("System.Drawing.Graphics" -as [Type])) { 
-    try { Add-Type -AssemblyName System.Drawing -ErrorAction Stop }
-    catch {
-        $ErrorMessage = "ERROR: Failed to load System.Drawing."
-        Write-Host $ErrorMessage -ForegroundColor Red
-        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Critical Error", "OK", "Error")
-    }
+# Load custom directory from config.txt if valid
+if (Test-Path $ConfigPath) {
+    try {
+        $CustomPath = (Get-Content $ConfigPath | ConvertFrom-StringData)["ProgramDir"].Trim()
+        if ($CustomPath -and (Test-Path $CustomPath)) { $ProgramDir = $CustomPath }
+    } catch { Write-Host "❌ Error reading config.txt: $_. Using default directories." }
 }
 
+# Define required directories
+$ScriptsDir = Join-Path $ProgramDir "Scripts"
 
+# Ensure Scripts directory exists
+if (!(Test-Path $ScriptsDir)) { 
+    try { 
+        New-Item -ItemType Directory -Path $ScriptsDir -Force | Out-Null 
+        Write-Host "✅ Created directory: $ScriptsDir"
+    } catch { 
+        Write-Host "❌ Error creating directory '$ScriptsDir': $($_.Exception.Message)" 
+        exit
+    }
+}
+
+# GitHub raw URL for `setup.py`
+$SetupScriptUrl = "https://raw.githubusercontent.com/genderlesspit/pdf_extractor/main/setup.py"
+$SetupScriptPath = Join-Path $ScriptsDir "setup.py"
+$LocalHashPath = Join-Path $ScriptsDir "setup_hash.txt"
+
+# Function to compute SHA256 hash of a file
+function Get-FileHashSHA256 {
+    param ([string]$FilePath)
+    if (Test-Path $FilePath) {
+        return (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash
+    } else {
+        return ""
+    }
+}
+
+# Function to fetch latest GitHub file hash
+function Get-GitHubFileHash {
+    try {
+        $GitHubContent = Invoke-WebRequest -Uri $SetupScriptUrl -UseBasicParsing
+        $GitHubHash = [System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($GitHubContent.Content))
+        return -join ($GitHubHash | ForEach-Object { $_.ToString("x2") })
+    } catch {
+        Write-Host "❌ Failed to retrieve GitHub file hash: $_"
+        return ""
+    }
+}
+
+# Compute current local and latest GitHub hashes
+$LocalHash = Get-FileHashSHA256 -FilePath $SetupScriptPath
+$GitHubHash = Get-GitHubFileHash
+
+# Compare hashes
+if ($LocalHash -ne $GitHubHash) {
+    Write-Host "🔄 New version detected! Updating setup.py..."
+    try {
+        Invoke-WebRequest -Uri $SetupScriptUrl -OutFile $SetupScriptPath -ErrorAction Stop
+        $GitHubHash | Set-Content -Path $LocalHashPath -Force
+        Write-Host "✅ setup.py updated successfully."
+    } catch {
+        Write-Host "❌ Failed to update setup.py: $_"
+        exit
+    }
+} else {
+    Write-Host "✅ setup.py is already up-to-date."
+}
+
+# Execute the Python setup script
+$PythonExe = "$env:USERPROFILE\\Python\\python.exe"
+
+if (Test-Path $PythonExe) {
+    Write-Host "🚀 Running setup..."
+    & $PythonExe $SetupScriptPath
+    Write-Host "✅ Setup completed successfully."
+} else {
+    Write-Host "❌ Python not found. Please install Python and try again."
+}
