@@ -106,27 +106,27 @@ function Create-RoundedButton {
 }
 
 # === Add Buttons ===
-$BtnUploadPDF = Create-RoundedButton "Upload PDF" $StartX $StartY "Upload-PDF.ps1"
+$BtnUploadPDF = Create-RoundedButton "Upload PDF" $StartX $StartY "upload-uDF.ps1"
 $Form.Controls.Add($BtnUploadPDF)
 
-$BtnMassMasterPDFs = Create-RoundedButton "Mass Input Master PDFs" ($StartX + ($ButtonWidth + $Spacing) * 1) $StartY "Mass-Input.ps1 master_pdf"
+$BtnMassMasterPDFs = Create-RoundedButton "Mass Input Master PDFs" ($StartX + ($ButtonWidth + $Spacing) * 1) $StartY "mass-Input.ps1 master_pdf"
 $Form.Controls.Add($BtnMassMasterPDFs)
 
-$BtnMassInput = Create-RoundedButton "Mass Input Output Name" ($StartX + ($ButtonWidth + $Spacing) * 2) $StartY "Mass-Input.ps1 output_name"
+$BtnMassInput = Create-RoundedButton "Mass Input Output Name" ($StartX + ($ButtonWidth + $Spacing) * 2) $StartY "mass-Input.ps1 output_name"
 $Form.Controls.Add($BtnMassInput)
 
-$BtnPageRange = Create-RoundedButton "Mass Input Page Range" ($StartX + ($ButtonWidth + $Spacing) * 3) $StartY "Mass-Input.ps1 page_range"
+$BtnPageRange = Create-RoundedButton "Mass Input Page Range" ($StartX + ($ButtonWidth + $Spacing) * 3) $StartY "mass-Input.ps1 page_range"
 $Form.Controls.Add($BtnPageRange)
 
-$BtnStart = Create-RoundedButton "Start Process" ($StartX + ($ButtonWidth + $Spacing) * 4) $StartY "Validate-Inputs.ps1"
+$BtnStart = Create-RoundedButton "Start Process" ($StartX + ($ButtonWidth + $Spacing) * 4) $StartY "validate-Inputs.ps1"
 $BtnStart.Add_Click({
-    Run-PowerShellScript -ScriptName "Validate-Inputs.ps1"
+    Run-PowerShellScript -ScriptName "validate-inputs.ps1"
     Start-Sleep -Seconds 1
 
     if (Read-ErrorsFromJSON) {
-        Run-PowerShellScript -ScriptName "Process-Extraction.ps1"
+        Run-PowerShellScript -ScriptName "process-extraction.ps1"
         Start-Sleep -Seconds 1
-        Run-PowerShellScript -ScriptName "Export-Files.ps1"
+        Run-PowerShellScript -ScriptName "export-files.ps1"
     }
 })
 $Form.Controls.Add($BtnStart)
