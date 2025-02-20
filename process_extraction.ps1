@@ -23,12 +23,12 @@ function Extract-PDFPages {
     $OutputPath = Join-Path $ExportsDir "$OutputName.pdf"
 
     if (!(Test-Path $PDFPath)) {
-        Write-Host "❌ File not found: $PDFPath"
+        Write-Host "❌ File not found: `${PDFPath}`"
         return $false
     }
 
     try {
-        Write-Host "📄 Extracting pages $PageRanges from $PDFName → $OutputName.pdf"
+        Write-Host "📄 Extracting pages `${PageRanges}` from `${PDFName}` → `${OutputName}.pdf`"
 
         # Replace this with actual PDF extraction logic
         # Example: Using a PowerShell module like PDFtk or Pdfium
@@ -36,11 +36,11 @@ function Extract-PDFPages {
 
         # Simulated success
         Start-Sleep -Seconds 2  # Simulate processing time
-        Write-Host "✅ Extraction complete for $OutputName.pdf"
+        Write-Host "✅ Extraction complete for `${OutputName}.pdf`"
 
         return $true
     } catch {
-        Write-Host "❌ Error extracting pages from $PDFName: $_"
+        Write-Host "❌ Error extracting pages from `${PDFName}` - Exception: $($_.Exception.Message)"
         return $false
     }
 }
