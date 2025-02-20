@@ -979,20 +979,6 @@ function Validate-DuplicateOutputNames {
     return $null
 }
 
-function Validate-DuplicateOutputNames {
-    param ([string]$OutputName, [int]$RowIndex, [hashtable]$OutputNameSet)
-
-    if (![string]::IsNullOrWhiteSpace($OutputName)) {
-        if ($OutputNameSet.ContainsKey($OutputName)) {
-            Write-Host "❌ Duplicate Output Name detected (Row $RowIndex): $OutputName"
-            return "Row $RowIndex: $OutputName"
-        } else {
-            $OutputNameSet[$OutputName] = $true
-        }
-    }
-    return $null
-}
-
 function Initialize-BatchFolder {
     # Generate timestamped batch folder
     $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
