@@ -1646,7 +1646,7 @@ $BtnStart.Add_Click({
 })  # ✅ This closing brace was missing
 
 # Ensure the script does not close until the GUI is properly closed
-$Form.Show()
+$Form.ShowDialog()
 while ($Form.Visible) {
     Start-Sleep -Milliseconds 100
     [System.Windows.Forms.Application]::DoEvents()
