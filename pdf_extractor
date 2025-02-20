@@ -1580,8 +1580,8 @@ $BtnStart.Add_Click({
         
             # Generate an error message listing invalid pages
             $ErrorMessage = "🚨 Page range exceeds total pages in PDF.`n" +
-                            "📄 PDF: $PDFFileName (Total Pages: $TotalPages)`n" +
-                            "❌ Invalid Page(s) in Row $RowIndex: " + ($InvalidPages -join ", ")
+                            "📄 PDF: ${PDFFileName} (Total Pages: ${TotalPages})`n" +
+                            "❌ Invalid Page(s) in Row ${RowIndex}: " + ($InvalidPages -join ", ")
         
             [System.Windows.Forms.MessageBox]::Show(
                 $ErrorMessage,
@@ -1593,8 +1593,6 @@ $BtnStart.Add_Click({
             Write-Host $ErrorMessage
             return
         }
-
-    }
 
     if ($ValidRows -eq 0) {
         [System.Windows.Forms.MessageBox]::Show(
