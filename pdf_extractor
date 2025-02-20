@@ -1602,13 +1602,13 @@ $BtnStart.Add_Click({
 
         # 🛠️ Collect errors instead of stopping immediately
         if (-not (Validate-PDFExists -PDFFileName $PDFFileName -RowIndex $RowIndex)) {
-            $ValidationErrors += "Row $RowIndex: PDF file '$PDFFileName' is missing."
+            $ValidationErrors += "Row `${RowIndex}`: PDF file '${PDFFileName}' is missing."
         }
         if (-not (Validate-DuplicateOutputNames -OutputName $OutputName -RowIndex $RowIndex -OutputNameSet $OutputNameSet)) {
-            $ValidationErrors += "Row $RowIndex: Output name '$OutputName' is duplicated."
+            $ValidationErrors += "Row `${RowIndex}`: Output name '${OutputName}' is duplicated."
         }
         if (-not (Validate-PageRangeWithinPDF -PDFPath $PDFPath -PageRanges $PageRanges -RowIndex $RowIndex)) {
-            $ValidationErrors += "Row $RowIndex: Page range '$PageRanges' is invalid or exceeds total pages."
+            $ValidationErrors += "Row `${RowIndex}`: Page range '${PageRanges}' is invalid or exceeds total pages."
         }
     }
 
@@ -1686,5 +1686,6 @@ while ($Form.Visible) {
     Start-Sleep -Milliseconds 100
     [System.Windows.Forms.Application]::DoEvents()
 }
+
 
 
