@@ -1,44 +1,19 @@
-# === Define Directories Properly ===
-$FallbackDir = "C:\PDF_Extractor"
-
-try {
-    $UserDocuments = [System.Environment]::GetFolderPath("MyDocuments")
-    if ([string]::IsNullOrWhiteSpace($UserDocuments)) {
-        throw "Unable to determine user 'Documents' folder."
-    }
-} catch {
-    Write-Host "⚠ Warning: Failed to fetch 'Documents' directory. Using fallback location: $FallbackDir"
-    $UserDocuments = $FallbackDir
-}
-
-# Allow custom base directory from config.txt
-$ProgramDir = Join-Path $UserDocuments "PDF_Extractor"
-$MasterPDFDir = Join-Path $ProgramDir "Master_PDFs"
-$ExportsDir = Join-Path $ProgramDir "Exports"
-$LogDir = Join-Path $ProgramDir "Logs"
-$DependenciesDir = Join-Path $ProgramDir "dependencies"
-$ScriptsDir = Join-Path $ProgramDir "Scripts"
-
-# Ensure all directories exist (no admin permissions required)
-@($ProgramDir, $MasterPDFDir, $ExportsDir, $LogDir, $DependenciesDir, $ScriptsDir) | ForEach-Object {
-    if (!(Test-Path $_)) { 
-        try { New-Item -ItemType Directory -Path $_ -Force | Out-Null }
-        catch { Write-Host "❌ Error creating directory '$_': $($_.Exception.Message)" }
-    }
-}
-
-# === Define Paths for User Environment (No Admin Required) ===
+# === Define Paths ===
 $PythonVersion = "3.11.6"
 $PythonZipUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
-$UserPythonFolder = "$DependenciesDir\\Python"
-$PythonZipPath = "$DependenciesDir\\python_embed.zip"
-$LogFile = "$LogDir\\python_install_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
+$UserPythonFolder = "$env:USERPROFILE\\Python"
+$PythonZipPath = "$env:TEMP\\python_embed.zip"
+$LogFolder = "$UserPythonFolder\\logs"
+$LogFile = "$LogFolder\\python_install_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 $PythonExe = "$UserPythonFolder\\python.exe"
-$PipInstallerPath = "$DependenciesDir\\get-pip.py"
+$PipInstallerPath = "$env:TEMP\\get-pip.py"
 
-# === Define Modular Dependencies (Installed in Dependencies Folder) ===
-$DefaultDependencies = @("pypdf", "pdf2image", "pillow")
-$CustomDependencies = @()
+# === Define Modular Dependencies ===
+$DefaultDependencies = @("pypdf", "pdf2image", "pillow")  # Default set of dependencies
+$CustomDependencies = @()  # Placeholder for user-defined dependencies
+
+# Ensure log directory exists
+if (!(Test-Path $LogFolder)) { New-Item -ItemType Directory -Path $LogFolder -Force | Out-Null }
 
 # Function to log messages
 function Log-Message {
@@ -48,60 +23,54 @@ function Log-Message {
     Write-Host $Message
 }
 
-# === Start Script Execution ===
-Log-Message "🚀 Starting Python installation (User Environment Only)..."
+# === Initialize Dependencies ===
+function Initialize-Dependencies {
+    param ([string[]]$ExtraDependencies)
 
-# === Step 1: Check if Python is already installed in USER Environment ===
-if (Test-Path $PythonExe) {
-    Log-Message "✅ Python is already installed at $UserPythonFolder"
-} else {
-    Log-Message "📥 Downloading Python ZIP package..."
-    try {
-        Invoke-WebRequest -Uri $PythonZipUrl -OutFile $PythonZipPath -ErrorAction Stop
-        Start-Sleep -Seconds 5
-        
-        if (Test-Path $PythonZipPath) {
-            Log-Message "📂 Extracting Python..."
-            Expand-Archive -Path $PythonZipPath -DestinationPath $UserPythonFolder -Force
-            Log-Message "✅ Python installed at: $UserPythonFolder"
-        } else {
-            Log-Message "❌ Python download failed. Exiting."
-            exit
-        }
-    } catch { 
-        Log-Message "❌ Error installing Python: $_"
-        exit
-    }
+    $Dependencies = $DefaultDependencies + $ExtraDependencies
+    return $Dependencies
 }
 
-# === Step 2: Add Python to User PATH (No Admin) ===
+# === Start Script Execution ===
+Log-Message "Starting Python installation (No Admin Required)..."
+
+# === Step 1: Check if Python is already installed ===
+if (Test-Path $PythonExe) {
+    Log-Message "Python is already installed at $UserPythonFolder"
+} else {
+    Log-Message "Downloading Python ZIP package..."
+    try {
+        Invoke-WebRequest -Uri $PythonZipUrl -OutFile $PythonZipPath
+        Expand-Archive -Path $PythonZipPath -DestinationPath $UserPythonFolder -Force
+        Log-Message "Python installed at: $UserPythonFolder"
+    } catch { Log-Message "Error installing Python: $_"; exit }
+}
+
+# === Step 2: Add Python to User PATH if not present ===
 $CurrentPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
 if ($CurrentPath -notlike "*$UserPythonFolder*") {
     $NewPath = "$UserPythonFolder;$CurrentPath"
     [System.Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
-    Log-Message "✅ Added Python to user PATH."
+    Log-Message "Added Python to user PATH"
 }
 
-# === Step 3: Install pip in USER Space ===
+# === Step 3: Check if pip is installed ===
 $PipCheck = & "$PythonExe" -m pip --version 2>&1
 if ($PipCheck -match "pip") {
-    Log-Message "✅ pip is already installed."
+    Log-Message "pip is already installed."
 } else {
-    Log-Message "📥 Downloading and installing pip..."
+    Log-Message "Downloading and installing pip..."
     try {
-        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $PipInstallerPath -ErrorAction Stop
-        & "$PythonExe" $PipInstallerPath --no-cache-dir --target="$DependenciesDir"
-        Log-Message "✅ pip installed successfully."
-    } catch { 
-        Log-Message "❌ Error installing pip: $_"
-        exit
-    }
+        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $PipInstallerPath
+        & "$PythonExe" $PipInstallerPath --no-cache-dir
+        Log-Message "pip installed successfully."
+    } catch { Log-Message "Error installing pip: $_"; exit }
 }
 
-# === Step 4: Install Required Dependencies in USER Space ===
-$DependenciesToInstall = $DefaultDependencies + $CustomDependencies
+# === Step 4: Install Required Dependencies ===
+$DependenciesToInstall = Initialize-Dependencies -ExtraDependencies $CustomDependencies
 
-Log-Message "🔍 Checking and installing required dependencies..."
+Log-Message "Checking and installing required dependencies..."
 $MissingPackages = & "$PythonExe" -c "
 import sys
 try:
@@ -113,48 +82,20 @@ except ModuleNotFoundError as e:
     print(e.name)" 2>&1
 
 if ($MissingPackages -eq "") {
-    Log-Message "✅ All dependencies are already installed."
+    Log-Message "All dependencies are already installed."
 } else {
     foreach ($Package in $MissingPackages -split "`n") {
         if ($DependenciesToInstall -contains $Package) {
-            Log-Message "📦 Installing $Package..."
-            $InstallOutput = & "$PythonExe" -m pip install --target="$DependenciesDir" --no-cache-dir $Package 2>&1
+            Log-Message "Installing $Package..."
+            $InstallOutput = & "$PythonExe" -m pip install --user --no-cache-dir $Package 2>&1
             if ($InstallOutput -match "Successfully installed") {
-                Log-Message "✅ Successfully installed $Package."
+                Log-Message "Successfully installed $Package."
             } else {
-                Log-Message "❌ Error installing ${Package}: $InstallOutput"
+                Log-Message "Error installing ${Package}: $InstallOutput"
             }
         }
     }
 }
 
-Log-Message "✅ Python setup completed in USER environment."
+Log-Message "Python setup completed."
 
-# === Auto-Install setup.py from GitHub in User Space ===
-$SetupScriptUrl = "https://github.com/genderlesspit/pdf_extractor/blob/b25e49c9dc383ed455069e0b4c64dda48f7dfb61/setup.py"
-$SetupScriptPath = Join-Path $ScriptsDir "setup.py"
-
-# If setup.py does not exist, download it
-if (!(Test-Path $SetupScriptPath)) {
-    Write-Host "📥 Downloading setup.py..."
-    try {
-        Invoke-WebRequest -Uri $SetupScriptUrl -OutFile $SetupScriptPath -ErrorAction Stop
-        Write-Host "✅ setup.py downloaded successfully."
-    } catch {
-        Write-Host "❌ Failed to download setup.py: $_"
-        exit
-    }
-} else {
-    Write-Host "✅ setup.py is already installed."
-}
-
-# Verify setup.py before execution
-if (!(Test-Path $SetupScriptPath)) {
-    Write-Host "❌ setup.py was not downloaded properly. Please check the GitHub URL."
-    exit
-}
-
-## === Execute setup.py in a New Process (User-Level) ===
-#Write-Host "🚀 Running setup.py in a separate process..."
-#Start-Process -FilePath $PythonExe -ArgumentList "`"$SetupScriptPath`"" -NoNewWindow -Wait
-#Write-Host "✅ Setup completed successfully."
