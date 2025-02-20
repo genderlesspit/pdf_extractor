@@ -82,16 +82,29 @@ if (-not $ProgramDir -or $ProgramDir -eq "") {
     exit 1
 }
 
-$GUIPath = Join-Path $ProgramDir "GUI.ps1"
+# Define Paths (Matching setup.ps1)
+$ProgramDir = "$env:USERPROFILE\PDF_Extractor"
+$DependenciesDir = "$ProgramDir\dependencies"
+$GUIPath = Join-Path $DependenciesDir "GUI.ps1"  # Corrected path
 
-# Check if GUI.ps1 exists
+# Check if GUI.ps1 Exists
 if (!(Test-Path $GUIPath)) {
     Write-Host "❌ GUI script not found at expected location: $GUIPath"
     [System.Windows.Forms.MessageBox]::Show("GUI script not found: $GUIPath", "Error", "OK", "Error")
     exit 1
 }
 
-Write-Host "🚀 Running GUI from: $GUIPath using cmd.exe"
+Write-Host "🚀 Running GUI script from: $GUIPath"
 
-# Run GUI.ps1 using cmd.exe to prevent PowerShell restrictions
-Start-Process -FilePath "cmd.exe" -ArgumentList "/c start powershell -ExecutionPolicy Bypass -File `"$GUIPath`""
+# Read `GUI.ps1` as a script block and execute
+try {
+    $GUIContent = Get-Content -Path $GUIPath -Raw
+    $ScriptBlock = [scriptblock]::Create($GUIContent)
+    & $ScriptBlock  # Run the script block in the current session
+    Write-Host "✅ GUI executed successfully!"
+} catch {
+    Write-Host "❌ Error executing GUI script: $($_.Exception.Message)"
+    [System.Windows.Forms.MessageBox]::Show("Error executing GUI script: $($_.Exception.Message)", "Error", "OK", "Error")
+    exit 1
+}
+
