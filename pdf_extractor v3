@@ -98,3 +98,26 @@ if ($MissingPackages -eq "") {
 }
 
 Log-Message "Python setup completed."
+
+
+# === Actual Script
+
+# === Load Required Assemblies ===
+if (-not ("System.Windows.Forms.Form" -as [Type])) { 
+    try { Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop }
+    catch {
+        $ErrorMessage = "ERROR: Failed to load System.Windows.Forms."
+        Write-Host $ErrorMessage -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Critical Error", "OK", "Error")
+    }
+}
+if (-not ("System.Drawing.Graphics" -as [Type])) { 
+    try { Add-Type -AssemblyName System.Drawing -ErrorAction Stop }
+    catch {
+        $ErrorMessage = "ERROR: Failed to load System.Drawing."
+        Write-Host $ErrorMessage -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Critical Error", "OK", "Error")
+    }
+}
+
+
