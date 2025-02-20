@@ -665,14 +665,26 @@ $DataTable.Columns.Add("Output Name") | Out-Null
 $DataTable.Columns.Add("Page Range") | Out-Null
 $DataGridView.DataSource = $DataTable
 
-# === Enable Auto-Complete for Master PDFs ===
 function Enable-AutoComplete {
+    # Ensure the Master PDF directory exists
+    if (!(Test-Path $MasterPDFDir)) {
+        Write-Host "⚠ Warning: Master PDF directory not found: $MasterPDFDir"
+        return
+    }
+
+    # Get available PDF files
     $MasterPDFs = Get-ChildItem -Path $MasterPDFDir -Filter "*.pdf" | Select-Object -ExpandProperty Name
+
+    # Ensure the list is not empty before calling .AddRange()
+    if ($MasterPDFs.Count -eq 0) {
+        Write-Host "⚠ No PDFs found in $MasterPDFDir. Auto-complete will be empty."
+        return
+    }
 
     foreach ($Row in $DataGridView.Rows) {
         if ($Row.Cells["Master PDF"] -is [System.Windows.Forms.DataGridViewTextBoxCell]) {
             $AutoComplete = New-Object System.Windows.Forms.AutoCompleteStringCollection
-            $AutoComplete.AddRange($MasterPDFs)
+            $AutoComplete.AddRange($MasterPDFs)  # 🛠️ Safe usage after checking for null/empty
 
             $TextBox = New-Object System.Windows.Forms.TextBox
             $TextBox.AutoCompleteMode = "SuggestAppend"
@@ -683,6 +695,8 @@ function Enable-AutoComplete {
             $Row.Cells["Master PDF"].Tag = $TextBox
         }
     }
+
+    Write-Host "✅ Auto-complete enabled with $($MasterPDFs.Count) PDFs."
 }
 
 # === SECTION 8: BUTTONS === 
