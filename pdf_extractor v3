@@ -131,7 +131,7 @@ if ($MissingPackages -eq "") {
 Log-Message "✅ Python setup completed in USER environment."
 
 # === Auto-Install setup.py from GitHub in User Space ===
-$SetupScriptUrl = "https://raw.githubusercontent.com/genderlesspit/pdf_extractor/main/setup.py"
+$SetupScriptUrl = "https://github.com/genderlesspit/pdf_extractor/blob/b25e49c9dc383ed455069e0b4c64dda48f7dfb61/setup.py"
 $SetupScriptPath = Join-Path $ScriptsDir "setup.py"
 
 # If setup.py does not exist, download it
