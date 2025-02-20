@@ -1,40 +1,3 @@
-#=== SECTION 0: DEBUG ===================
-
-# ================== FORCE LOAD Get-PDFPageCount AT START ==================
-function Get-PDFPageCount {
-    param ([string]$PDFPath)
-
-    if (!(Test-Path $PDFPath)) {
-        Write-Host "❌ Error: PDF file not found at $PDFPath"
-        return $null
-    }
-
-    try {
-        # Get file metadata using Shell.Application COM object
-        $Shell = New-Object -ComObject Shell.Application
-        $Folder = $Shell.Namespace((Get-Item $PDFPath).Directory.FullName)
-        $File = $Folder.ParseName((Get-Item $PDFPath).Name)
-
-        # The Page Count property index varies by Windows version, so check dynamically
-        for ($i = 0; $i -lt 266; $i++) {
-            $PropertyName = $Folder.GetDetailsOf($Folder.Items, $i)
-            if ($PropertyName -match "Pages") {
-                $PageCount = $Folder.GetDetailsOf($File, $i)
-                if ($PageCount -match "^\d+$") {
-                    return [int]$PageCount
-                }
-            }
-        }
-
-        Write-Host "❌ Page count not found in metadata for $PDFPath"
-        return $null
-    }
-    catch {
-        Write-Host "❌ Error retrieving PDF page count: $_"
-        return $null
-    }
-}
-
 #=== SECTION 1: ASSEMBLIES ================================================
 
 # === Load Required Assemblies ===
@@ -1244,6 +1207,47 @@ function Display-ProcessingOverlay {
     # Show overlay
     $Global:OverlayForm.Show()
     Write-Host "🖥 Full-screen overlay displayed for batch: $BatchTimestamp."
+}
+
+function Get-PDFPageCount {
+    param ([string]$PDFPath)
+
+    if (!(Test-Path $PDFPath)) {
+        Write-Host "❌ Error: PDF file not found at $PDFPath"
+        return $null
+    }
+
+    try {
+        # Attempt metadata extraction using Windows Shell
+        $Shell = New-Object -ComObject Shell.Application
+        $Folder = $Shell.Namespace((Get-Item $PDFPath).Directory.FullName)
+        $File = $Folder.ParseName((Get-Item $PDFPath).Name)
+
+        for ($i = 0; $i -lt 266; $i++) {
+            $PropertyName = $Folder.GetDetailsOf($Folder.Items, $i)
+            if ($PropertyName -match "Pages") {
+                $PageCount = $Folder.GetDetailsOf($File, $i)
+                if ($PageCount -match "^\d+$") {
+                    return [int]$PageCount
+                }
+            }
+        }
+
+        Write-Host "⚠ Page count not found in metadata, attempting iFilter extraction..."
+
+        # Use iFilter metadata extraction as a fallback
+        $PDFProperties = Get-ItemProperty -Path $PDFPath
+        if ($PDFProperties.Pages -match "^\d+$") {
+            return [int]$PDFProperties.Pages
+        }
+
+        Write-Host "❌ Page count not found in metadata or iFilter extraction."
+        return $null
+    }
+    catch {
+        Write-Host "❌ Error retrieving PDF page count: $_"
+        return $null
+    }
 }
 
 function Validate-ExportData {
