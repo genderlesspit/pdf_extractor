@@ -76,13 +76,6 @@ Remove-Item -Path $ExtractPath -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "🚀 Dependencies updated successfully! You're ready to run the program."
 
-# Check if GUI.ps1 exists
-if (!(Test-Path $GUIPath)) {
-    Write-Host "❌ GUI script not found at expected location: $GUIPath"
-    [System.Windows.Forms.MessageBox]::Show("GUI script not found: $GUIPath", "Error", "OK", "Error")
-    exit 1
-}
-
 # Ensure $ProgramDir is set
 if (-not $ProgramDir -or $ProgramDir -eq "") {
     Write-Host "❌ Error: Program directory is not set correctly."
