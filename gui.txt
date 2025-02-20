@@ -143,3 +143,5 @@ function Enable-AutoComplete {
 
     Write-Host "✅ Auto-complete enabled with $($MasterPDFs.Count) PDFs."
 }
+
+$Form.ShowDialog()
