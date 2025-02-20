@@ -7,7 +7,10 @@ $LogFolder = "$UserPythonFolder\\logs"
 $LogFile = "$LogFolder\\python_install_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 $PythonExe = "$UserPythonFolder\\python.exe"
 $PipInstallerPath = "$env:TEMP\\get-pip.py"
-$Dependencies = @("pypdf", "pdf2image", "pillow")
+
+# === Define Modular Dependencies ===
+$DefaultDependencies = @("pypdf", "pdf2image", "pillow")  # Default set of dependencies
+$CustomDependencies = @()  # Placeholder for user-defined dependencies
 
 # Ensure log directory exists
 if (!(Test-Path $LogFolder)) { New-Item -ItemType Directory -Path $LogFolder -Force | Out-Null }
@@ -20,6 +23,15 @@ function Log-Message {
     Write-Host $Message
 }
 
+# === Initialize Dependencies ===
+function Initialize-Dependencies {
+    param ([string[]]$ExtraDependencies)
+
+    $Dependencies = $DefaultDependencies + $ExtraDependencies
+    return $Dependencies
+}
+
+# === Start Script Execution ===
 Log-Message "Starting Python installation (No Admin Required)..."
 
 # === Step 1: Check if Python is already installed ===
@@ -55,7 +67,9 @@ if ($PipCheck -match "pip") {
     } catch { Log-Message "Error installing pip: $_"; exit }
 }
 
-# === Step 4: Install Required Dependencies if Missing ===
+# === Step 4: Install Required Dependencies ===
+$DependenciesToInstall = Initialize-Dependencies -ExtraDependencies $CustomDependencies
+
 Log-Message "Checking and installing required dependencies..."
 $MissingPackages = & "$PythonExe" -c "
 import sys
@@ -70,13 +84,15 @@ except ModuleNotFoundError as e:
 if ($MissingPackages -eq "") {
     Log-Message "All dependencies are already installed."
 } else {
-    foreach ($Package in $MissingPackages -split ",") {
-        Log-Message "Installing $Package..."
-        $InstallOutput = & "$PythonExe" -m pip install --user --no-cache-dir $Package 2>&1
-        if ($InstallOutput -match "Successfully installed") {
-            Log-Message "Successfully installed $Package."
-        } else {
-          Log-Message "Error installing ${Package}: $InstallOutput"
+    foreach ($Package in $MissingPackages -split "`n") {
+        if ($DependenciesToInstall -contains $Package) {
+            Log-Message "Installing $Package..."
+            $InstallOutput = & "$PythonExe" -m pip install --user --no-cache-dir $Package 2>&1
+            if ($InstallOutput -match "Successfully installed") {
+                Log-Message "Successfully installed $Package."
+            } else {
+                Log-Message "Error installing $Package: $InstallOutput"
+            }
         }
     }
 }
