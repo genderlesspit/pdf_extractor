@@ -1064,6 +1064,7 @@ function Check-PreviousExports {
 
     # Get list of previous exports
     $PreviousExports = Get-ChildItem -Path $ExportsDir -Directory | Where-Object { $_.Name -ne (Split-Path -Leaf $BatchFolder) }
+    
     foreach ($ExportFolder in $PreviousExports) {
         $ExportedFiles = Get-ChildItem -Path $ExportFolder.FullName -Filter "*.pdf"
         foreach ($File in $ExportedFiles) {
@@ -1071,8 +1072,19 @@ function Check-PreviousExports {
         }
     }
 
-    # If matching files exist, ask the user if they want to transport them
-    if ($PreviouslyExportedFiles.Count -gt 0) {
+    # Filter only the files that have an exact 1:1 match with Output Names
+    $MatchingExports = @{}
+    foreach ($Row in $DataGridView.Rows) {
+        if ($Row.Cells["Output Name"].Value -and $Row.Cells["Output Name"].Value -ne "") {
+            $OutputFile = "$($Row.Cells["Output Name"].Value).pdf"
+            if ($PreviouslyExportedFiles.ContainsKey($OutputFile)) {
+                $MatchingExports[$OutputFile] = $PreviouslyExportedFiles[$OutputFile]
+            }
+        }
+    }
+
+    # If exact matches exist, ask the user whether they want to transport them
+    if ($MatchingExports.Count -gt 0) {
         $TransportPrompt = [System.Windows.Forms.MessageBox]::Show(
             "Some files from previous exports match the ones you're trying to create.`n`nWould you like to transport them into the new folder instead of re-exporting?",
             "Transport Previously Exported Files",
@@ -1080,9 +1092,9 @@ function Check-PreviousExports {
         )
 
         if ($TransportPrompt -eq "Yes") {
-            foreach ($FileName in $PreviouslyExportedFiles.Keys) {
+            foreach ($FileName in $MatchingExports.Keys) {
                 $NewPath = Join-Path $BatchFolder $FileName
-                Copy-Item -Path $PreviouslyExportedFiles[$FileName] -Destination $NewPath -Force
+                Copy-Item -Path $MatchingExports[$FileName] -Destination $NewPath -Force
                 $SkippedExports += $FileName  # Mark as skipped
                 Write-Host "✅ Transported: $FileName → $NewPath"
             }
@@ -1551,6 +1563,7 @@ $BtnStart.Add_Click({
     $FailedExports = @()
     $SkippedExports = @()
     $ValidRows = 0
+    $ValidationErrors = @()  # 🛠️ Store all validation errors
 
     # Generate batch timestamp and create export folder
     $BatchTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -1587,23 +1600,39 @@ $BtnStart.Add_Click({
 
         $ValidRows++
 
-        # Perform validation checks
-        if (-not (Validate-PDFExists -PDFFileName $PDFFileName -RowIndex $RowIndex) -or
-            -not (Validate-DuplicateOutputNames -OutputName $OutputName -RowIndex $RowIndex -OutputNameSet $OutputNameSet) -or
-            -not (Validate-PageRangeWithinPDF -PDFPath $PDFPath -PageRanges $PageRanges -RowIndex $RowIndex)) {
-            
-            [System.Windows.Forms.MessageBox]::Show(
-                "Validation errors detected. Please fix the errors and restart.",
-                "Validation Error", "OK", "Error"
-            )
-            return
+        # 🛠️ Collect errors instead of stopping immediately
+        if (-not (Validate-PDFExists -PDFFileName $PDFFileName -RowIndex $RowIndex)) {
+            $ValidationErrors += "Row $RowIndex: PDF file '$PDFFileName' is missing."
         }
+        if (-not (Validate-DuplicateOutputNames -OutputName $OutputName -RowIndex $RowIndex -OutputNameSet $OutputNameSet)) {
+            $ValidationErrors += "Row $RowIndex: Output name '$OutputName' is duplicated."
+        }
+        if (-not (Validate-PageRangeWithinPDF -PDFPath $PDFPath -PageRanges $PageRanges -RowIndex $RowIndex)) {
+            $ValidationErrors += "Row $RowIndex: Page range '$PageRanges' is invalid or exceeds total pages."
+        }
+    }
+
+    # 🛠️ If validation errors exist, show all in a message box
+    if ($ValidationErrors.Count -gt 0) {
+        $ErrorMessage = "🚨 Validation Errors Detected:`n`n" + ($ValidationErrors -join "`n")
+        
+        [System.Windows.Forms.MessageBox]::Show(
+            $ErrorMessage,
+            "Validation Errors",
+            "OK",
+            "Error"
+        )
+
+        Write-Host $ErrorMessage  # Also log to console
+        return
     }
 
     if ($ValidRows -eq 0) {
         [System.Windows.Forms.MessageBox]::Show(
             "🚨 No valid rows found. Please enter at least one row before starting.",
-            "Validation Error", "OK", "Error"
+            "Validation Error",
+            "OK",
+            "Error"
         )
         return
     }
